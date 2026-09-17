@@ -9,7 +9,7 @@
 > * If you have an issue, please try loading with the [official methods outlined here](https://github.com/samuelgr/Hookshot/wiki/Getting-Started)
 > * I have included samuel's license and kept their name attached
 > * This is NOT a statement of approval from them or a statement that this is code of their quality
-> * The launcher code in particular however is far too derivative to deny, and the license should be kept, as it's absolutely a derivative work
+> * The launcher code in particular, however, is far too derivative to deny, and the license should be kept, as it's absolutely a derivative work
 
 ---
 
@@ -17,18 +17,33 @@
 
 I have a few bugbears with the original launcher, mainly that it's quite the directory clutterer.
 
-**About the executables**
-> * Instead of having to determine architecture and place the Hookshot Launcher executable manually, the shipped executable is an installer
-> * `hookshot-launchinst32.exe` is for 32-bit systems and it only packs the 32-bit launcher, as well
-> * `hookshot-launchinst64.exe` covers all your use cases on a modern machine
-> * My [Scoop](https://scoop.sh) manifest for this project will always simply use the `hookshot-launchinst` name, keeping either 32 or 64 based on your system architecture and renaming it to a simpler basename so it's on `PATH`
-> * The launcher(s) are contained within the above executables
-
 **How to use, what's it do?**
-> * When you run `<path-to-hookshot-launchinst> install <path-to-executable>` it will determine architecture and copy from its internal resources the actual launcher required for this game, handling the rename of the original to the format the launcher expects and renaming the launcher to take its place
-> * The installer copies icon and version resources from the original executable to make it visually match the original
-> * It warns you if `%HookshotDir%` is not set
+> ```
+> Usage:
+>   hookshot-launchinst(32/64) [install | uninstall | update] <path-to-exe>
+>
+> Commands:
+>   install     Replaces target executable with a Hookshot-compatible entrypoint
+>   uninstall   Restores original game executable
+>   update      Bring an existing launchinst installation up to date with the current embedded launcher
+> ```
+> * `install` will determine architecture and copy from its internal resources the actual launcher required for this game, handling the rename of the original to the format the launcher expects and renaming the launcher to take its place
+> * It also copies icon and version resources from the original executable to make it look good
 > * `uninstall` will of course reverse this, and also warn you of any straggler files that you may wish to delete afterward
+> * `update` works similarly to `install`, but will refresh an existing installation in-place (good to do if you updated hookshot-launchinst)
+
+**About the executables**
+> * Instead of having to determine architecture and place executable(s) manually, the shipped executable is an installer
+> * `hookshot-launchinst32.exe` is for 32-bit systems and it only packs the 32-bit launcher
+> * `hookshot-launchinst64.exe` covers all your use cases on a modern machine
+> * The launcher(s) are contained within the above executables as resources extracted on-demand
+
+**Installing with Scoop**
+> * This repo also doubles as a [Scoop](https://scoop.sh) bucket for this project's manifest
+> * You can install the bucket like so: `scoop bucket add hookshot-launchinst https://github.com/aro-1790/hookshot-launchinst`
+> * Alternately, install it with `bucket_setup.bat` at the root of this repo- it will sparse checkout for you
+> * After the bucket's added, you can install launchinst with `scoop install hookshot-launchinst`
+> * To remove the bucket if you no longer want it: `scoop bucket rm hookshot-launchinst`
 
 **Other details**
 > * The launcher itself has a `%HookshotDir%` check- if it doesn't exist, it'll ask you to choose where your root Hookshot directory is (the directory that contains Win32/x64) instead of having to copy over the Hookshot DLL and EXE to every game dir
