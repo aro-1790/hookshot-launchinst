@@ -310,10 +310,12 @@ static void print_usage(const wchar_t *exe_name)
 
     wprintf(L"Hookshot Launcher/Installer\n\n");
     wprintf(L"Usage:\n");
-    wprintf(L"  %ls [install | uninstall] <path-to-game-exe>\n\n", stem);
+    wprintf(L"  %ls [install | uninstall | update] <path-to-exe>\n\n", stem);
     wprintf(L"Commands:\n");
     wprintf(L"  install     Replaces target executable with a Hookshot-compatible entrypoint\n");
     wprintf(L"  uninstall   Restores original game executable\n");
+    wprintf(L"  update      Bring an existing launchinst installation up to date with the current embedded launcher\n\n");
+    wprintf(L"Note: All operations target the original executable NAME, not the suffixed _hks_!\n");
 }
 
 static int extract_launcher_resource(int resource_id, const wchar_t *dest_path)
@@ -433,6 +435,81 @@ static int do_install(wchar_t **argv)
     return 0;
 }
 
+static int do_update(wchar_t **argv)
+{
+    wchar_t target[PATHBUF];
+    wchar_t dir[PATHBUF];
+    wchar_t base[PATHBUF];
+    wchar_t suffixed[PATHBUF];
+    wchar_t hs_target[PATHBUF];
+    wchar_t machine[64];
+    int resource_id = 0;
+    DWORD len;
+
+    len = GetFullPathNameW(argv[2], PATHBUF, target, NULL);
+    if (len == 0 || len >= PATHBUF) {
+        report_invalid_target_path();
+        return 1;
+    }
+
+    if (!file_exists_w(target)) {
+        report_target_not_found();
+        return 1;
+    }
+
+    dirname_of(target, dir, PATHBUF);
+    basename_of(target, base, PATHBUF);
+
+    if (validate_target_base(base))
+        return 1;
+
+    apply_suffix(base, suffixed, PATHBUF);
+    _snwprintf(hs_target, PATHBUF, L"%ls\\%ls", dir, suffixed);
+    hs_target[PATHBUF - 1] = L'\0';
+
+    if (!file_exists_w(hs_target)) {
+        wprintf(L"No Hookshot installation found\n");
+        return 0;
+    }
+
+    if (get_pe_machine(target, machine, 64) != 0) {
+        report_err_msg(L"Cannot determine architecture");
+        return 1;
+    }
+
+    if (wcscmp(machine, L"x86") == 0) {
+        resource_id = IDR_LAUNCHER_32;
+    } else if (wcscmp(machine, L"x64") == 0) {
+#ifdef HKS_INSTALLER_32ONLY
+        wprintf(L"Updating launcher\n");
+        report_err_msg(L"  Unsupported architecture (64 on 32)");
+        return 1;
+#else
+        resource_id = IDR_LAUNCHER_64;
+#endif
+    } else {
+        report_err_msg(L"Unsupported architecture");
+        return 1;
+    }
+
+    wprintf(L"Updating launcher\n");
+    wprintf(L"  %ls architecture detected\n", machine);
+
+    check_hookshot_dir();
+
+    if (!extract_launcher_resource(resource_id, target)) {
+        DWORD err = GetLastError();
+        fwprintf(stderr, L"Failed to extract launcher (error %lu)\n", err);
+        return 1;
+    }
+    wprintf(L"  Launcher executable in place\n");
+
+    copy_resources(hs_target, target);
+
+    SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW, target, NULL);
+    return 0;
+}
+
 static void report_ini_leftover(const wchar_t *dir)
 {
     wchar_t ini_path[PATHBUF];
@@ -542,6 +619,15 @@ int wmain(int argc, wchar_t **argv)
             return 1;
         }
         return do_uninstall(argv);
+    }
+
+    if (_wcsicmp(argv[1], L"update") == 0) {
+        if (argc < 3) {
+            report_err_msg(L"Update requires a target path\n");
+            print_usage(argv[0]);
+            return 1;
+        }
+        return do_update(argv);
     }
 
     report_err_msg(L"Unknown verb\n");
