@@ -1,0 +1,17 @@
+﻿{
+  "version": "2026.09.16",
+  "description": "Installer and alternate launcher for samuelgr's Hookshot",
+  "homepage": "https://github.com/aro-1790/hookshot-launchinst",
+  "license": "BSD-3-Clause",
+  "bin": "hookshot-launchinst.exe",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/aro-1790/hookshot-launchinst/releases/download/v2026.09.16/hookshot-launchinst64.exe#/hookshot-launchinst.exe",
+      "hash": "a631da7319692392521bde3b02c8bb7a8389a66c76df7a2df68418275d784ef0"
+    },
+    "32bit": {
+      "url": "https://github.com/aro-1790/hookshot-launchinst/releases/download/v2026.09.16/hookshot-launchinst32.exe#/hookshot-launchinst.exe",
+      "hash": "3b157b8e1487949dad0e5fd315ca0e50a80e4f16cdc871820f861f7bf30f9fdc"
+    }
+  }
+}
