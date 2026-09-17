@@ -1,0 +1,45 @@
+#include <windows.h>
+
+#define IDR_LAUNCHER_32 101
+#define IDR_LAUNCHER_64 102
+
+/* Primary Application Icon */
+1 ICON "resource/hookshot-launchinst.ico"
+
+/* Embedded Launcher Binaries */
+IDR_LAUNCHER_32 256 "hks-launch32.exe"
+
+#ifndef HKS_INSTALLER_32ONLY
+IDR_LAUNCHER_64 256 "hks-launch64.exe"
+#endif
+
+/* Version Metadata */
+1 VERSIONINFO
+FILEVERSION __REV__
+PRODUCTVERSION __REV__
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0x0L
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "adam_odell"
+            VALUE "FileDescription", "Hookshot Launcher/Installer"
+            VALUE "FileVersion", "__REV__"
+            VALUE "InternalName", "hookshot-launchinst"
+            VALUE "LegalCopyright", "The Langoliers of Code"
+            VALUE "OriginalFilename", "__ORIGINAL_FILENAME__"
+            VALUE "ProductName", "Hookshot Launcher/Installer"
+            VALUE "ProductVersion", "__REV__"
+        END
+    END
+
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 0x04B0
+    END
+END

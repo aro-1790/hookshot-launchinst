@@ -1,0 +1,11 @@
+# Private tooling
+release.ps1
+bucket/hookshot-launchinst.json.in
+
+# Local editor settings
+.vscode/
+
+# Build artifacts & compiled binaries
+*.o
+*.exe
+release/
