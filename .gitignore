@@ -1,5 +1,5 @@
 # Private tooling
-release.sh
+*.sh
 bucket/hookshot-launchinst.json.in
 
 # Local editor settings
