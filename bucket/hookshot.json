@@ -1,0 +1,29 @@
+{
+    "version": "2.0.0",
+    "description": "General-purpose library for injecting DLLs and hooking function calls",
+    "homepage": "https://github.com/samuelgr/Hookshot",
+    "license": "BSD-3-Clause",
+    "url": "https://github.com/samuelgr/Hookshot/releases/download/v2.0.0/Hookshot-v2.0.0.zip",
+    "hash": "d41d150330249a564672cbe3a2f5b02bc7b4cecd36022bcfaf1b275e5b556d99",
+    "extract_dir": "Hookshot-v2.0.0",
+    "installer": {
+        "script": [
+            "if ($architecture -eq '32bit') {",
+            "    Remove-Item -Path \"$dir\\x64\", \"$dir\\x64.bin\" -Recurse -Force -ErrorAction SilentlyContinue",
+            "}",
+            "[Environment]::SetEnvironmentVariable('HookshotDir', $dir, 'User')",
+            "Write-Host \"`nEnvironment variable %HookshotDir% set\""
+        ]
+    },
+    "uninstaller": {
+        "script": [
+            "[Environment]::SetEnvironmentVariable('HookshotDir', $null, 'User')",
+            "Write-Host \"`nEnvironment variable %HookshotDir% removed\""
+        ]
+    },
+    "checkver": "github",
+    "autoupdate": {
+        "url": "https://github.com/samuelgr/Hookshot/releases/download/v$version/Hookshot-v$version.zip",
+        "extract_dir": "Hookshot-v$version"
+    }
+}

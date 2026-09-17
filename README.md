@@ -43,6 +43,7 @@ I have a few bugbears with the original launcher, mainly that it's quite the dir
 > * You can install the bucket like so: `scoop bucket add hookshot-launchinst https://github.com/aro-1790/hookshot-launchinst`
 > * Alternately, install it with `bucket_setup.bat` at the root of this repo- it will sparse checkout for you
 > * After the bucket's added, you can install launchinst with `scoop install hookshot-launchinst`
+> * NEW! You can now install Hookshot from this bucket (autoconfigures %HookshotDir%, too!) `scoop install hookshot`
 > * To remove the bucket if you no longer want it: `scoop bucket rm hookshot-launchinst`
 
 **Other details**
