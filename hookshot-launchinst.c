@@ -289,11 +289,28 @@ static void check_hookshot_dir(void)
     }
 }
 
-static void print_usage(void)
+static void print_usage(const wchar_t *exe_name)
 {
+    wchar_t basename[PATHBUF];
+    wchar_t stem[PATHBUF];
+    const wchar_t *dot;
+    size_t n;
+
+    basename_of(exe_name, basename, PATHBUF);
+
+    dot = wcsrchr(basename, L'.');
+    if (dot) {
+        n = (size_t)(dot - basename);
+        if (n >= PATHBUF) n = PATHBUF - 1;
+        wcsncpy(stem, basename, n);
+        stem[n] = 0;
+    } else {
+        lstrcpynW(stem, basename, PATHBUF);
+    }
+
     wprintf(L"Hookshot Launcher/Installer\n\n");
     wprintf(L"Usage:\n");
-    wprintf(L"  hookshot-launchinst64.exe [install | uninstall] <path-to-game-exe>\n\n");
+    wprintf(L"  %ls [install | uninstall] <path-to-game-exe>\n\n", stem);
     wprintf(L"Commands:\n");
     wprintf(L"  install     Replaces target executable with a Hookshot-compatible entrypoint\n");
     wprintf(L"  uninstall   Restores original game executable\n");
@@ -505,14 +522,14 @@ static int do_uninstall(wchar_t **argv)
 int wmain(int argc, wchar_t **argv)
 {
     if (argc < 2) {
-        print_usage();
+        print_usage(argv[0]);
         return 1;
     }
 
     if (_wcsicmp(argv[1], L"install") == 0) {
         if (argc < 3) {
             report_err_msg(L"Install requires a target path\n");
-            print_usage();
+            print_usage(argv[0]);
             return 1;
         }
         return do_install(argv);
@@ -521,13 +538,13 @@ int wmain(int argc, wchar_t **argv)
     if (_wcsicmp(argv[1], L"uninstall") == 0) {
         if (argc < 3) {
             report_err_msg(L"Uninstall requires a target path\n");
-            print_usage();
+            print_usage(argv[0]);
             return 1;
         }
         return do_uninstall(argv);
     }
 
     report_err_msg(L"Unknown verb\n");
-    print_usage();
+    print_usage(argv[0]);
     return 1;
 }
