@@ -1,23 +1,10 @@
 # hookshot-launchinst
-#
-# Produces four binaries:
-#   hks-launch32.exe                  32-bit launcher, deployed as <game>.exe (GUI)
-#   hks-launch64.exe                  64-bit launcher, deployed as <game>.exe (GUI)
-#   release/hookshot-launchinst32.exe Installer / uninstaller (32-bit Console)
-#   release/hookshot-launchinst64.exe Installer / uninstaller (64-bit Console)
 
 VERSION_FILE   := resource/version.txt
 GIT_SHORT_HASH := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
-# Execute interactive helper to retrieve version string (vMAJOR.MINOR-hash),
-# or fall back to resource/version.txt if the script is absent (e.g., in a release tarball)
-REV := $(shell if [ -f "./version.sh" ]; then \
-            ./version.sh; \
-        elif [ -f "$(VERSION_FILE)" ]; then \
-            cat "$(VERSION_FILE)"; \
-        else \
-            echo "v0.0-$(GIT_SHORT_HASH)"; \
-        fi)
+# Retrieve version string from version file
+REV := $(shell cat "$(VERSION_FILE)")
 
 # Parse numeric components for windres (MAJOR,MINOR,BUILD,RELEASE)
 CLEAN_REV         := $(subst v,,$(firstword $(subst -, ,$(REV))))
