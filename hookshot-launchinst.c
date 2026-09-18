@@ -11,6 +11,22 @@
 #define IDR_LAUNCHER_64 102
 #define RES_TYPE_EXE    256
 
+/* Forward declarations for functions defined later but used above. */
+static int validate_and_prepare_target(wchar_t **argv,
+                                      wchar_t *target, size_t target_sz,
+                                      wchar_t *dir, size_t dir_sz,
+                                      wchar_t *base, size_t base_sz,
+                                      wchar_t *suffixed, size_t suffixed_sz,
+                                      wchar_t *hs_target, size_t hs_target_sz,
+                                      wchar_t *machine, size_t machine_sz,
+                                      int *resource_id);
+
+static void finalize_operation(const wchar_t *target);
+
+static int get_architecture_and_resource_id(const wchar_t *target,
+                                           wchar_t *machine, size_t machine_sz,
+                                           int *resource_id);
+
 static int basename_is_ours(const wchar_t *base)
 {
     return _wcsicmp(base, INSTALLER_NAME) == 0;
@@ -362,58 +378,18 @@ static int do_install(wchar_t **argv)
     wchar_t hs_target[PATHBUF];
     wchar_t machine[64];
     int resource_id = 0;
-    DWORD len;
 
-    len = GetFullPathNameW(argv[2], PATHBUF, target, NULL);
-    if (len == 0 || len >= PATHBUF) {
-        report_invalid_target_path();
+    if (validate_and_prepare_target(argv, target, PATHBUF, dir, PATHBUF, base, PATHBUF, 
+                                   suffixed, PATHBUF, hs_target, PATHBUF, machine, 64, &resource_id))
         return 1;
-    }
-
-    if (!file_exists_w(target)) {
-        report_target_not_found();
-        return 1;
-    }
-
-    dirname_of(target, dir, PATHBUF);
-    basename_of(target, base, PATHBUF);
-
-    if (validate_target_base(base))
-        return 1;
-
-    apply_suffix(base, suffixed, PATHBUF);
-    _snwprintf(hs_target, PATHBUF, L"%ls\\%ls", dir, suffixed);
-    hs_target[PATHBUF - 1] = L'\0';
 
     if (file_exists_w(hs_target)) {
         report_already_installed();
         return 1;
     }
 
-    if (get_pe_machine(target, machine, 64) != 0) {
-        report_err_msg(L"Cannot determine architecture");
-        return 1;
-    }
-
-    if (wcscmp(machine, L"x86") == 0) {
-        resource_id = IDR_LAUNCHER_32;
-    } else if (wcscmp(machine, L"x64") == 0) {
-#ifdef HKS_INSTALLER_32ONLY
-        wprintf(L"Installing launcher\n");
-        report_err_msg(L"  Unsupported architecture (64 on 32)");
-        return 1;
-#else
-        resource_id = IDR_LAUNCHER_64;
-#endif
-    } else {
-        report_err_msg(L"Unsupported architecture");
-        return 1;
-    }
-
     wprintf(L"Installing launcher\n");
     wprintf(L"  %ls architecture detected\n", machine);
-
-    check_hookshot_dir();
 
     if (!MoveFileW(target, hs_target)) {
         DWORD err = GetLastError();
@@ -431,7 +407,7 @@ static int do_install(wchar_t **argv)
 
     copy_resources(hs_target, target);
 
-    SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW, target, NULL);
+    finalize_operation(target);
     return 0;
 }
 
@@ -444,58 +420,18 @@ static int do_update(wchar_t **argv)
     wchar_t hs_target[PATHBUF];
     wchar_t machine[64];
     int resource_id = 0;
-    DWORD len;
 
-    len = GetFullPathNameW(argv[2], PATHBUF, target, NULL);
-    if (len == 0 || len >= PATHBUF) {
-        report_invalid_target_path();
+    if (validate_and_prepare_target(argv, target, PATHBUF, dir, PATHBUF, base, PATHBUF, 
+                                   suffixed, PATHBUF, hs_target, PATHBUF, machine, 64, &resource_id))
         return 1;
-    }
-
-    if (!file_exists_w(target)) {
-        report_target_not_found();
-        return 1;
-    }
-
-    dirname_of(target, dir, PATHBUF);
-    basename_of(target, base, PATHBUF);
-
-    if (validate_target_base(base))
-        return 1;
-
-    apply_suffix(base, suffixed, PATHBUF);
-    _snwprintf(hs_target, PATHBUF, L"%ls\\%ls", dir, suffixed);
-    hs_target[PATHBUF - 1] = L'\0';
 
     if (!file_exists_w(hs_target)) {
         wprintf(L"No Hookshot installation found\n");
         return 0;
     }
 
-    if (get_pe_machine(target, machine, 64) != 0) {
-        report_err_msg(L"Cannot determine architecture");
-        return 1;
-    }
-
-    if (wcscmp(machine, L"x86") == 0) {
-        resource_id = IDR_LAUNCHER_32;
-    } else if (wcscmp(machine, L"x64") == 0) {
-#ifdef HKS_INSTALLER_32ONLY
-        wprintf(L"Updating launcher\n");
-        report_err_msg(L"  Unsupported architecture (64 on 32)");
-        return 1;
-#else
-        resource_id = IDR_LAUNCHER_64;
-#endif
-    } else {
-        report_err_msg(L"Unsupported architecture");
-        return 1;
-    }
-
     wprintf(L"Updating launcher\n");
     wprintf(L"  %ls architecture detected\n", machine);
-
-    check_hookshot_dir();
 
     if (!extract_launcher_resource(resource_id, target)) {
         DWORD err = GetLastError();
@@ -506,7 +442,7 @@ static int do_update(wchar_t **argv)
 
     copy_resources(hs_target, target);
 
-    SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW, target, NULL);
+    finalize_operation(target);
     return 0;
 }
 
@@ -559,10 +495,6 @@ static int do_uninstall(wchar_t **argv)
 
     dirname_of(target, dir, PATHBUF);
     basename_of(target, base, PATHBUF);
-
-    if (validate_target_base(base))
-        return 1;
-
     apply_suffix(base, suffixed, PATHBUF);
     _snwprintf(hs_target, PATHBUF, L"%ls\\%ls", dir, suffixed);
     hs_target[PATHBUF - 1] = L'\0';
@@ -592,7 +524,7 @@ static int do_uninstall(wchar_t **argv)
     report_ini_leftover(dir);
     report_hookmodule_dlls_leftover(dir);
 
-    SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW, target, NULL);
+    finalize_operation(target);
     return 0;
 }
 
@@ -633,4 +565,72 @@ int wmain(int argc, wchar_t **argv)
     report_err_msg(L"Unknown verb\n");
     print_usage(argv[0]);
     return 1;
+}
+
+static int validate_and_prepare_target(wchar_t **argv, 
+                                      wchar_t *target, size_t target_sz,
+                                      wchar_t *dir, size_t dir_sz,
+                                      wchar_t *base, size_t base_sz,
+                                      wchar_t *suffixed, size_t suffixed_sz,
+                                      wchar_t *hs_target, size_t hs_target_sz,
+                                      wchar_t *machine, size_t machine_sz,
+                                      int *resource_id)
+{
+    DWORD len = GetFullPathNameW(argv[2], target_sz, target, NULL);
+    if (len == 0 || len >= target_sz) {
+        report_invalid_target_path();
+        return 1;
+    }
+
+    if (!file_exists_w(target)) {
+        report_target_not_found();
+        return 1;
+    }
+
+    dirname_of(target, dir, dir_sz);
+    basename_of(target, base, base_sz);
+
+    if (validate_target_base(base))
+        return 1;
+
+    apply_suffix(base, suffixed, suffixed_sz);
+    _snwprintf(hs_target, hs_target_sz, L"%ls\\%ls", dir, suffixed);
+    hs_target[hs_target_sz - 1] = L'\0';
+
+    if (get_architecture_and_resource_id(target, machine, machine_sz, resource_id))
+        return 1;
+
+    return 0;
+}
+
+static void finalize_operation(const wchar_t *target)
+{
+    check_hookshot_dir();
+    SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW, target, NULL);
+}
+
+static int get_architecture_and_resource_id(const wchar_t *target, 
+                                           wchar_t *machine, size_t machine_sz,
+                                           int *resource_id)
+{
+    if (get_pe_machine(target, machine, machine_sz) != 0) {
+        report_err_msg(L"Cannot determine architecture");
+        return 1;
+    }
+
+    if (wcscmp(machine, L"x86") == 0) {
+        *resource_id = IDR_LAUNCHER_32;
+    } else if (wcscmp(machine, L"x64") == 0) {
+#ifdef HKS_INSTALLER_32ONLY
+        report_err_msg(L"  Unsupported architecture (64 on 32)");
+        return 1;
+#else
+        *resource_id = IDR_LAUNCHER_64;
+#endif
+    } else {
+        report_err_msg(L"Unsupported architecture");
+        return 1;
+    }
+
+    return 0;
 }
