@@ -400,7 +400,7 @@ static int do_install(wchar_t **argv)
     if (!extract_launcher_resource(resource_id, target)) {
         DWORD err = GetLastError();
         fwprintf(stderr, L"Failed to extract launcher (error %lu)\nRolling back rename\n", err);
-        MoveFileW(hs_target, target);
+        MoveFileExW(hs_target, target, MOVEFILE_REPLACE_EXISTING);
         return 1;
     }
     wprintf(L"  Launcher executable in place\n");
@@ -537,7 +537,7 @@ int wmain(int argc, wchar_t **argv)
 
     if (_wcsicmp(argv[1], L"install") == 0) {
         if (argc < 3) {
-            report_err_msg(L"Install requires a target path\n");
+            report_err_msg(L"Install requires a target path");
             print_usage(argv[0]);
             return 1;
         }
@@ -546,7 +546,7 @@ int wmain(int argc, wchar_t **argv)
 
     if (_wcsicmp(argv[1], L"uninstall") == 0) {
         if (argc < 3) {
-            report_err_msg(L"Uninstall requires a target path\n");
+            report_err_msg(L"Uninstall requires a target path");
             print_usage(argv[0]);
             return 1;
         }
@@ -555,14 +555,14 @@ int wmain(int argc, wchar_t **argv)
 
     if (_wcsicmp(argv[1], L"update") == 0) {
         if (argc < 3) {
-            report_err_msg(L"Update requires a target path\n");
+            report_err_msg(L"Update requires a target path");
             print_usage(argv[0]);
             return 1;
         }
         return do_update(argv);
     }
 
-    report_err_msg(L"Unknown verb\n");
+    report_err_msg(L"Unknown verb");
     print_usage(argv[0]);
     return 1;
 }
