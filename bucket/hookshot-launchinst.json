@@ -1,5 +1,5 @@
 {
-    "version": "0.2-2789343",
+    "version": "0.3-79d39b3",
     "description": "Installer and alternate launcher for samuelgr's Hookshot",
     "homepage": "https://github.com/aro-1790/hookshot-launchinst",
     "license": "BSD-3-Clause",
@@ -9,12 +9,12 @@
     "bin": "hookshot-launchinst.exe",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/aro-1790/hookshot-launchinst/releases/download/v0.2-2789343/hookshot-launchinst64.exe#/hookshot-launchinst.exe",
-            "hash": "2f11d425ed9515a6e45863e3b9a1f17d269689b73a945e9a996c6e91ce5c4112"
+            "url": "https://github.com/aro-1790/hookshot-launchinst/releases/download/v0.3-79d39b3/hookshot-launchinst64.exe#/hookshot-launchinst.exe",
+            "hash": "2792473bd178b99e7558837b962d518a3f0880574b4d8a5c4e53b4cf710f534f"
         },
         "32bit": {
-            "url": "https://github.com/aro-1790/hookshot-launchinst/releases/download/v0.2-2789343/hookshot-launchinst32.exe#/hookshot-launchinst.exe",
-            "hash": "6b2f06adbef7e518d4b85b6933420615f09888bab1d0742b675d779f31f37a91"
+            "url": "https://github.com/aro-1790/hookshot-launchinst/releases/download/v0.3-79d39b3/hookshot-launchinst32.exe#/hookshot-launchinst.exe",
+            "hash": "df7afc3e94c95cc8a4ece08742a3d02ad65f85512fdb5ffd3a0969433a666dc5"
         }
     }
 }
