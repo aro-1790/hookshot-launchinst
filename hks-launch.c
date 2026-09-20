@@ -49,6 +49,8 @@ static void show_err_code2(const wchar_t *action, const wchar_t *path, DWORD err
 static DWORD ensure_marker(const wchar_t *marker_path);
 static int prompt_and_store_hookshot_dir(wchar_t *out_dir, size_t dir_sz);
 static int locate_worker(wchar_t *out, size_t outsz);
+static int exe_has_compat_layer(const wchar_t *exe_path);
+static void warn_if_compat_layer_present(const wchar_t *target_path);
 static int relaunch_elevated(const wchar_t *self, const wchar_t *args);
 static int run_worker(HANDLE target_process, HANDLE target_thread, const wchar_t *worker_path);
 static int do_launcher(const wchar_t *self, const wchar_t *args);
@@ -148,6 +150,77 @@ static int locate_worker(wchar_t *out, size_t outsz)
         return 0;
     }
     return 1;
+}
+
+/* Returns non-zero if the specified executable has a Windows compatibility
+   layer registered against it (per-user or machine-wide). Compatibility modes
+   configured through the file's Properties dialog are stored in the
+   AppCompatFlags\Layers key, keyed by full executable path. */
+static int exe_has_compat_layer(const wchar_t *exe_path)
+{
+    static const wchar_t kLayersKey[] =
+        L"Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers";
+    static const HKEY kHives[] = { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE };
+    static const REGSAM kViews[] = { 0, KEY_WOW64_64KEY, KEY_WOW64_32KEY };
+    size_t i, j;
+
+    if (exe_path == NULL) return 0;
+
+    for (i = 0; i < sizeof(kHives) / sizeof(kHives[0]); ++i) {
+        for (j = 0; j < sizeof(kViews) / sizeof(kViews[0]); ++j) {
+            HKEY hKey = NULL;
+            DWORD type = 0;
+            DWORD size = 0;
+
+            if (RegOpenKeyExW(kHives[i], kLayersKey, 0,
+                              KEY_QUERY_VALUE | kViews[j], &hKey) != ERROR_SUCCESS)
+                continue;
+
+            if (RegQueryValueExW(hKey, exe_path, NULL, &type, NULL, &size) == ERROR_SUCCESS &&
+                (type == REG_SZ || type == REG_EXPAND_SZ)) {
+                RegCloseKey(hKey);
+                return 1;
+            }
+
+            RegCloseKey(hKey);
+        }
+    }
+
+    return 0;
+}
+
+/* The game process ends up under compatibility shims either way: layers active
+   on the launcher (for example, "Windows XP (Service Pack 2)") are inherited by
+   the game, and layers registered directly against the real executable apply to
+   it as well. Hookshot's own injection worker is isolated from the shims, but
+   HookModules are loaded into the game and may not behave correctly under them.
+   Warn the user, naming the source(s), and continue. */
+static void warn_if_compat_layer_present(const wchar_t *target_path)
+{
+    wchar_t layer[PATHBUF];
+    DWORD layer_len = GetEnvironmentVariableW(L"__COMPAT_LAYER", layer, PATHBUF);
+    int on_launcher = (layer_len > 0 && layer_len < PATHBUF);
+    int on_target = exe_has_compat_layer(target_path);
+    const wchar_t *source;
+    wchar_t msg[512];
+
+    if (!on_launcher && !on_target) return;
+
+    if (on_launcher && on_target)
+        source = L"both this launcher and the real executable";
+    else if (on_target)
+        source = L"the real executable";
+    else
+        source = L"this launcher";
+
+    _snwprintf(msg, 512,
+               L"A compatibility mode is set on %ls. "
+               L"Some HookModules might not play nice with it "
+               L"(turn off if having issues).",
+               source);
+    msg[511] = L'\0';
+
+    MessageBoxW(NULL, msg, HKS_LAUNCHER_EXE_TITLE, MB_OK | MB_ICONWARNING);
 }
 
 static int relaunch_elevated(const wchar_t *self, const wchar_t *args)
@@ -375,6 +448,12 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
         show_err_code2(L"create authorization marker", marker, err);
         return 1;
     }
+
+    /* Warn only once the launch is actually going to proceed. Placing this here
+       rather than at startup means an elevation re-launch (which supersedes the
+       instance that requested it) does not re-trigger the warning: only the
+       instance that is about to inject the game reaches this point. */
+    warn_if_compat_layer_present(target);
 
     ok = run_worker(pi.hProcess, pi.hThread, worker);
 
