@@ -1,5 +1,6 @@
 #include "hks-common.h"
 
+#include <objbase.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <stddef.h>
@@ -48,9 +49,9 @@ static void show_err_code2(const wchar_t *action, const wchar_t *path, DWORD err
 static DWORD ensure_marker(const wchar_t *marker_path);
 static int prompt_and_store_hookshot_dir(wchar_t *out_dir, size_t dir_sz);
 static int locate_worker(wchar_t *out, size_t outsz);
-static int relaunch_elevated(const wchar_t *self);
+static int relaunch_elevated(const wchar_t *self, const wchar_t *args);
 static int run_worker(HANDLE target_process, HANDLE target_thread, const wchar_t *worker_path);
-static int do_launcher(const wchar_t *self);
+static int do_launcher(const wchar_t *self, const wchar_t *args);
 
 static void show_error(const wchar_t *msg)
 {
@@ -149,7 +150,7 @@ static int locate_worker(wchar_t *out, size_t outsz)
     return 1;
 }
 
-static int relaunch_elevated(const wchar_t *self)
+static int relaunch_elevated(const wchar_t *self, const wchar_t *args)
 {
     SHELLEXECUTEINFOW sei;
     DWORD exit_code = 0;
@@ -159,6 +160,7 @@ static int relaunch_elevated(const wchar_t *self)
     sei.fMask   = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
     sei.lpVerb  = L"runas";
     sei.lpFile  = self;
+    sei.lpParameters = (args != NULL && args[0] != L'\0') ? args : NULL;
     sei.nShow   = SW_SHOWDEFAULT;
 
     if (!ShellExecuteExW(&sei)) {
@@ -222,10 +224,34 @@ static int run_worker(HANDLE target_process, HANDLE target_thread,
     si.cb = sizeof(si);
     ZeroMemory(&pi, sizeof(pi));
 
-    if (!CreateProcessW(worker_path, cmdline, NULL, NULL,
-                        TRUE, CREATE_SUSPENDED, NULL, NULL, &si, &pi)) {
-        show_err_code2(L"launch injection worker", worker_path, GetLastError());
-        goto cleanup;
+    /* Windows applies compatibility shims (such as "Windows XP (Service Pack
+       2)") to a process based on its image path and exposes the active shims
+       through the inherited __COMPAT_LAYER variable. The worker performs the
+       injection, so it must not run under those shims. Temporarily clear the
+       variable for the worker spawn, then restore it. The game process is
+       created separately and keeps its compatibility mode. */
+    {
+        wchar_t saved_layer[PATHBUF];
+        DWORD layer_len = GetEnvironmentVariableW(L"__COMPAT_LAYER",
+                                                  saved_layer, PATHBUF);
+        int layer_present = (layer_len > 0 && layer_len < PATHBUF);
+        BOOL started;
+        DWORD spawn_err;
+
+        if (layer_present)
+            SetEnvironmentVariableW(L"__COMPAT_LAYER", NULL);
+
+        started = CreateProcessW(worker_path, cmdline, NULL, NULL,
+                                 TRUE, CREATE_SUSPENDED, NULL, NULL, &si, &pi);
+        spawn_err = started ? ERROR_SUCCESS : GetLastError();
+
+        if (layer_present)
+            SetEnvironmentVariableW(L"__COMPAT_LAYER", saved_layer);
+
+        if (!started) {
+            show_err_code2(L"launch injection worker", worker_path, spawn_err);
+            goto cleanup;
+        }
     }
 
     if (!DuplicateHandle(GetCurrentProcess(), target_process,
@@ -277,7 +303,7 @@ cleanup:
     return ok;
 }
 
-static int do_launcher(const wchar_t *self)
+static int do_launcher(const wchar_t *self, const wchar_t *args)
 {
     wchar_t selfname[PATHBUF];
     wchar_t dir[PATHBUF];
@@ -285,6 +311,7 @@ static int do_launcher(const wchar_t *self)
     wchar_t target[PATHBUF];
     wchar_t worker[PATHBUF];
     wchar_t marker[PATHBUF];
+    wchar_t cmdline[PATHBUF * 2];
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;
     DWORD exit_code = 0;
@@ -299,6 +326,15 @@ static int do_launcher(const wchar_t *self)
 
     _snwprintf(marker, PATHBUF, L"%ls.hookshot", target);
     marker[PATHBUF - 1] = L'\0';
+
+    /* Build the target's command line with the real executable as argv[0],
+       then forward our own arguments. This mirrors what the official Hookshot
+       launcher does and avoids feeding the game a mismatched module name. */
+    if (args != NULL && args[0] != L'\0')
+        _snwprintf(cmdline, PATHBUF * 2, L"\"%ls\" %ls", target, args);
+    else
+        _snwprintf(cmdline, PATHBUF * 2, L"\"%ls\"", target);
+    cmdline[(PATHBUF * 2) - 1] = L'\0';
 
     if (!file_exists_w(target)) {
         wchar_t msg[PATHBUF + 256];
@@ -317,11 +353,11 @@ static int do_launcher(const wchar_t *self)
     si.cb = sizeof(si);
     ZeroMemory(&pi, sizeof(pi));
 
-    if (!CreateProcessW(target, GetCommandLineW(), NULL, NULL, FALSE,
+    if (!CreateProcessW(target, cmdline, NULL, NULL, FALSE,
                         CREATE_SUSPENDED, NULL, dir, &si, &pi)) {
         err = GetLastError();
         if (err == ERROR_ELEVATION_REQUIRED)
-            return relaunch_elevated(self);
+            return relaunch_elevated(self, args);
 
         show_err_code2(L"create target process", target, err);
         return 1;
@@ -334,7 +370,7 @@ static int do_launcher(const wchar_t *self)
         CloseHandle(pi.hProcess);
 
         if (err == ERROR_ACCESS_DENIED)
-            return relaunch_elevated(self);
+            return relaunch_elevated(self, args);
 
         show_err_code2(L"create authorization marker", marker, err);
         return 1;
@@ -366,14 +402,23 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 {
     wchar_t self[PATHBUF];
     DWORD n;
+    int rc;
+    HRESULT hr;
 
-    (void)hInstance; (void)hPrevInstance; (void)lpCmdLine; (void)nCmdShow;
+    (void)hInstance; (void)hPrevInstance; (void)nCmdShow;
+
+    /* SHBrowseForFolder with BIF_NEWDIALOGSTYLE requires COM to be initialized
+       on the calling thread. */
+    hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
 
     n = GetModuleFileNameW(NULL, self, PATHBUF);
     if (n == 0 || n >= PATHBUF) {
         show_error(L"Could not determine own path.");
+        if (SUCCEEDED(hr)) CoUninitialize();
         return 1;
     }
 
-    return do_launcher(self);
+    rc = do_launcher(self, lpCmdLine);
+    if (SUCCEEDED(hr)) CoUninitialize();
+    return rc;
 }
