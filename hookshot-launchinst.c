@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define INSTALLER_NAME   L"hookshot-launchinst.exe"
+#define INSTALLER_NAME_PREFIX L"hookshot-launchinst"
 
 #define IDR_LAUNCHER_32 101
 #define IDR_LAUNCHER_64 102
@@ -27,9 +27,13 @@ static int get_architecture_and_resource_id(const wchar_t *target,
                                            wchar_t *machine, size_t machine_sz,
                                            int *resource_id);
 
+/* Matches the installer's own artifacts: hookshot-launchinst.exe as installed
+   via Scoop, plus the architecture-suffixed hookshot-launchinst32.exe and
+   hookshot-launchinst64.exe shipped in releases. */
 static int basename_is_ours(const wchar_t *base)
 {
-    return _wcsicmp(base, INSTALLER_NAME) == 0;
+    return _wcsnicmp(base, INSTALLER_NAME_PREFIX,
+                     wcslen(INSTALLER_NAME_PREFIX)) == 0;
 }
 
 static void report_err_msg(const wchar_t *msg)
