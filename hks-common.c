@@ -24,43 +24,16 @@ void basename_of(const wchar_t *path, wchar_t *out, size_t outsz)
     lstrcpynW(out, p ? p + 1 : path, (int)outsz);
 }
 
-void apply_suffix(const wchar_t *basename, wchar_t *out, size_t outsz)
+void apply_prefix(const wchar_t *basename, wchar_t *out, size_t outsz)
 {
-    wchar_t stem[PATHBUF];
-    const wchar_t *ext = L"";
-    const wchar_t *dot = wcsrchr(basename, L'.');
-
     if (!out || outsz == 0) return;
-
-    if (dot) {
-        size_t n = (size_t)(dot - basename);
-        if (n >= PATHBUF) n = PATHBUF - 1;
-        wcsncpy(stem, basename, n);
-        stem[n] = 0;
-        ext = dot;
-    } else {
-        lstrcpynW(stem, basename, PATHBUF);
-    }
-
-    _snwprintf(out, outsz, L"%ls%ls%ls", stem, TARGET_SUFFIX, ext);
+    _snwprintf(out, outsz, L"%ls%ls", TARGET_PREFIX, basename);
     out[outsz - 1] = L'\0';
 }
 
-int has_target_suffix(const wchar_t *basename)
+int has_target_prefix(const wchar_t *basename)
 {
-    size_t stem_len;
-    size_t suffix_len = wcslen(TARGET_SUFFIX);
-    const wchar_t *dot = wcsrchr(basename, L'.');
-
-    if (dot)
-        stem_len = (size_t)(dot - basename);
-    else
-        stem_len = wcslen(basename);
-
-    if (stem_len < suffix_len) return 0;
-
-    return wcsncmp(basename + stem_len - suffix_len,
-                   TARGET_SUFFIX, suffix_len) == 0;
+    return wcsncmp(basename, TARGET_PREFIX, wcslen(TARGET_PREFIX)) == 0;
 }
 
 int get_pe_machine(const wchar_t *path, wchar_t *out, size_t outsz)

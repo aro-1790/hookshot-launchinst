@@ -16,7 +16,7 @@ static int validate_and_prepare_target(wchar_t **argv,
                                       wchar_t *target, size_t target_sz,
                                       wchar_t *dir, size_t dir_sz,
                                       wchar_t *base, size_t base_sz,
-                                      wchar_t *suffixed, size_t suffixed_sz,
+                                      wchar_t *prefixed, size_t prefixed_sz,
                                       wchar_t *hs_target, size_t hs_target_sz,
                                       wchar_t *machine, size_t machine_sz,
                                       int *resource_id);
@@ -75,7 +75,7 @@ static int validate_target_base(const wchar_t *base)
         report_err_msg(L"You targeted me!\nPass another executable instead");
         return 1;
     }
-    if (has_target_suffix(base)) {
+    if (has_target_prefix(base)) {
         report_already_installed();
         return 1;
     }
@@ -331,7 +331,7 @@ static void print_usage(const wchar_t *exe_name)
     wprintf(L"  install     Replaces target executable with a Hookshot-compatible entrypoint\n");
     wprintf(L"  uninstall   Restores original game executable\n");
     wprintf(L"  update      Bring an existing launchinst installation up to date with the current embedded launcher\n\n");
-    wprintf(L"Note: All operations target the original executable NAME, not the suffixed _hks_!\n");
+    wprintf(L"Note: All operations target the original executable NAME, not the _hks_-prefixed one!\n");
 }
 
 static int extract_launcher_resource(int resource_id, const wchar_t *dest_path)
@@ -374,13 +374,13 @@ static int do_install(wchar_t **argv)
     wchar_t target[PATHBUF];
     wchar_t dir[PATHBUF];
     wchar_t base[PATHBUF];
-    wchar_t suffixed[PATHBUF];
+    wchar_t prefixed[PATHBUF];
     wchar_t hs_target[PATHBUF];
     wchar_t machine[64];
     int resource_id = 0;
 
     if (validate_and_prepare_target(argv, target, PATHBUF, dir, PATHBUF, base, PATHBUF, 
-                                   suffixed, PATHBUF, hs_target, PATHBUF, machine, 64, &resource_id))
+                                   prefixed, PATHBUF, hs_target, PATHBUF, machine, 64, &resource_id))
         return 1;
 
     if (file_exists_w(hs_target)) {
@@ -416,13 +416,13 @@ static int do_update(wchar_t **argv)
     wchar_t target[PATHBUF];
     wchar_t dir[PATHBUF];
     wchar_t base[PATHBUF];
-    wchar_t suffixed[PATHBUF];
+    wchar_t prefixed[PATHBUF];
     wchar_t hs_target[PATHBUF];
     wchar_t machine[64];
     int resource_id = 0;
 
     if (validate_and_prepare_target(argv, target, PATHBUF, dir, PATHBUF, base, PATHBUF, 
-                                   suffixed, PATHBUF, hs_target, PATHBUF, machine, 64, &resource_id))
+                                   prefixed, PATHBUF, hs_target, PATHBUF, machine, 64, &resource_id))
         return 1;
 
     if (!file_exists_w(hs_target)) {
@@ -477,7 +477,7 @@ static int do_uninstall(wchar_t **argv)
     wchar_t target[PATHBUF];
     wchar_t dir[PATHBUF];
     wchar_t base[PATHBUF];
-    wchar_t suffixed[PATHBUF];
+    wchar_t prefixed[PATHBUF];
     wchar_t hs_target[PATHBUF];
     wchar_t marker[PATHBUF];
     DWORD len;
@@ -495,8 +495,8 @@ static int do_uninstall(wchar_t **argv)
 
     dirname_of(target, dir, PATHBUF);
     basename_of(target, base, PATHBUF);
-    apply_suffix(base, suffixed, PATHBUF);
-    _snwprintf(hs_target, PATHBUF, L"%ls\\%ls", dir, suffixed);
+    apply_prefix(base, prefixed, PATHBUF);
+    _snwprintf(hs_target, PATHBUF, L"%ls\\%ls", dir, prefixed);
     hs_target[PATHBUF - 1] = L'\0';
 
     if (!file_exists_w(hs_target)) {
@@ -571,7 +571,7 @@ static int validate_and_prepare_target(wchar_t **argv,
                                       wchar_t *target, size_t target_sz,
                                       wchar_t *dir, size_t dir_sz,
                                       wchar_t *base, size_t base_sz,
-                                      wchar_t *suffixed, size_t suffixed_sz,
+                                      wchar_t *prefixed, size_t prefixed_sz,
                                       wchar_t *hs_target, size_t hs_target_sz,
                                       wchar_t *machine, size_t machine_sz,
                                       int *resource_id)
@@ -593,8 +593,8 @@ static int validate_and_prepare_target(wchar_t **argv,
     if (validate_target_base(base))
         return 1;
 
-    apply_suffix(base, suffixed, suffixed_sz);
-    _snwprintf(hs_target, hs_target_sz, L"%ls\\%ls", dir, suffixed);
+    apply_prefix(base, prefixed, prefixed_sz);
+    _snwprintf(hs_target, hs_target_sz, L"%ls\\%ls", dir, prefixed);
     hs_target[hs_target_sz - 1] = L'\0';
 
     if (get_architecture_and_resource_id(target, machine, machine_sz, resource_id))

@@ -380,7 +380,7 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
 {
     wchar_t selfname[PATHBUF];
     wchar_t dir[PATHBUF];
-    wchar_t suffixed[PATHBUF];
+    wchar_t prefixed[PATHBUF];
     wchar_t target[PATHBUF];
     wchar_t worker[PATHBUF];
     wchar_t marker[PATHBUF];
@@ -393,8 +393,8 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
 
     basename_of(self, selfname, PATHBUF);
     dirname_of(self, dir, PATHBUF);
-    apply_suffix(selfname, suffixed, PATHBUF);
-    _snwprintf(target, PATHBUF, L"%ls\\%ls", dir, suffixed);
+    apply_prefix(selfname, prefixed, PATHBUF);
+    _snwprintf(target, PATHBUF, L"%ls\\%ls", dir, prefixed);
     target[PATHBUF - 1] = L'\0';
 
     _snwprintf(marker, PATHBUF, L"%ls.hookshot", target);
@@ -414,7 +414,7 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
         _snwprintf(msg, PATHBUF + 256,
                    L"Real executable not found:\n%ls\n\n"
                    L"Expected alongside this launcher as:\n  %ls",
-                   target, suffixed);
+                   target, prefixed);
         msg[PATHBUF + 255] = L'\0';
         show_error(msg);
         return 1;
