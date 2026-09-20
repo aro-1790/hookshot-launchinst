@@ -48,6 +48,6 @@ I have a few bugbears with the original launcher, mainly that it's quite the dir
 
 **Other details**
 > * The launcher itself has a `%HookshotDir%` check- if it doesn't exist, it'll ask you to choose where your root Hookshot directory is (the directory that contains Win32/x64) instead of having to copy over the Hookshot DLL and EXE to every game dir
-> * This launcher also automatically creates the Hookshot authorization file, but cleans it up when the process is done unlike the official launcher
+> * This launcher also automatically creates the Hookshot authorization file (unless one is already present), but cleans up the one it creates when the process is done unlike the official launcher
 > * It's a 0KB file, rewrites won't hurt, and it gets rid of a file that only needs to exist at runtime
 > * I use the `_hks_` prefix for the original executable- it's much shorter than the official launcher's `_HookshotLauncher_` prefix, and leaves the game's original executable name intact at the end (some games check their own name, and a suffix trips them up)

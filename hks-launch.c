@@ -51,6 +51,8 @@ static int prompt_and_store_hookshot_dir(wchar_t *out_dir, size_t dir_sz);
 static int locate_worker(wchar_t *out, size_t outsz);
 static int exe_has_compat_layer(const wchar_t *exe_path);
 static void warn_if_compat_layer_present(const wchar_t *target_path);
+static void append_quoted_argument(wchar_t *out, size_t outsz, size_t *len, const wchar_t *text);
+static void build_target_command_line(const wchar_t *target, wchar_t *out, size_t outsz);
 static int relaunch_elevated(const wchar_t *self, const wchar_t *args);
 static int run_worker(HANDLE target_process, HANDLE target_thread, const wchar_t *worker_path);
 static int do_launcher(const wchar_t *self, const wchar_t *args);
@@ -376,6 +378,53 @@ cleanup:
     return ok;
 }
 
+/* Appends one already-parsed argument to a command line being rebuilt, wrapped
+   in quotes with any embedded quote characters escaped. Matches how the
+   official Hookshot launcher re-emits each argument. */
+static void append_quoted_argument(wchar_t *out, size_t outsz, size_t *len, const wchar_t *text)
+{
+    const wchar_t *p;
+
+    if (*len + 1 < outsz) out[(*len)++] = L'"';
+
+    for (p = text; *p != L'\0'; ++p) {
+        if (L'"' == *p && *len + 1 < outsz) out[(*len)++] = L'\\';
+        if (*len + 1 < outsz) out[(*len)++] = *p;
+    }
+
+    if (*len + 1 < outsz) out[(*len)++] = L'"';
+    out[*len] = L'\0';
+}
+
+/* Builds the game's command line the way the official Hookshot launcher does:
+   the real executable path first, then each of our own arguments, every element
+   quoted with embedded quotes escaped. This keeps the raw command line (which
+   some games parse themselves) identical in shape to the stock launcher's. */
+static void build_target_command_line(const wchar_t *target, wchar_t *out, size_t outsz)
+{
+    int argc = 0;
+    wchar_t **argv;
+    size_t len = 0;
+    int i;
+
+    if (out == NULL || outsz == 0) return;
+    out[0] = L'\0';
+
+    argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+
+    append_quoted_argument(out, outsz, &len, target);
+
+    if (argv != NULL) {
+        /* argv[0] is this launcher's own path; forward everything after it. */
+        for (i = 1; i < argc; ++i) {
+            if (len + 1 < outsz) out[len++] = L' ';
+            out[len] = L'\0';
+            append_quoted_argument(out, outsz, &len, argv[i]);
+        }
+        LocalFree(argv);
+    }
+}
+
 static int do_launcher(const wchar_t *self, const wchar_t *args)
 {
     wchar_t selfname[PATHBUF];
@@ -384,11 +433,13 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
     wchar_t target[PATHBUF];
     wchar_t worker[PATHBUF];
     wchar_t marker[PATHBUF];
+    wchar_t dirwide_marker[PATHBUF];
     wchar_t cmdline[PATHBUF * 2];
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;
     DWORD exit_code = 0;
     DWORD err;
+    int created_marker = 0;
     int ok;
 
     basename_of(self, selfname, PATHBUF);
@@ -400,14 +451,10 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
     _snwprintf(marker, PATHBUF, L"%ls.hookshot", target);
     marker[PATHBUF - 1] = L'\0';
 
-    /* Build the target's command line with the real executable as argv[0],
-       then forward our own arguments. This mirrors what the official Hookshot
-       launcher does and avoids feeding the game a mismatched module name. */
-    if (args != NULL && args[0] != L'\0')
-        _snwprintf(cmdline, PATHBUF * 2, L"\"%ls\" %ls", target, args);
-    else
-        _snwprintf(cmdline, PATHBUF * 2, L"\"%ls\"", target);
-    cmdline[(PATHBUF * 2) - 1] = L'\0';
+    _snwprintf(dirwide_marker, PATHBUF, L"%ls\\.hookshot", dir);
+    dirwide_marker[PATHBUF - 1] = L'\0';
+
+    build_target_command_line(target, cmdline, PATHBUF * 2);
 
     if (!file_exists_w(target)) {
         wchar_t msg[PATHBUF + 256];
@@ -426,8 +473,10 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
     si.cb = sizeof(si);
     ZeroMemory(&pi, sizeof(pi));
 
+    /* Let the game inherit this launcher's working directory, as the official
+       Hookshot launcher does, instead of forcing it to the game directory. */
     if (!CreateProcessW(target, cmdline, NULL, NULL, FALSE,
-                        CREATE_SUSPENDED, NULL, dir, &si, &pi)) {
+                        CREATE_SUSPENDED, NULL, NULL, &si, &pi)) {
         err = GetLastError();
         if (err == ERROR_ELEVATION_REQUIRED)
             return relaunch_elevated(self, args);
@@ -436,17 +485,24 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
         return 1;
     }
 
-    err = ensure_marker(marker);
-    if (err != ERROR_SUCCESS) {
-        TerminateProcess(pi.hProcess, (UINT)-1);
-        CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
+    /* Hookshot accepts either an application-specific <exe>.hookshot or a
+       directory-wide .hookshot as authorization. Only create the former when
+       neither already exists, so an already-authorized game folder is not
+       written to (and never needs elevation just to authorize). */
+    if (!file_exists_w(marker) && !file_exists_w(dirwide_marker)) {
+        err = ensure_marker(marker);
+        if (err != ERROR_SUCCESS) {
+            TerminateProcess(pi.hProcess, (UINT)-1);
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
 
-        if (err == ERROR_ACCESS_DENIED)
-            return relaunch_elevated(self, args);
+            if (err == ERROR_ACCESS_DENIED)
+                return relaunch_elevated(self, args);
 
-        show_err_code2(L"create authorization marker", marker, err);
-        return 1;
+            show_err_code2(L"create authorization marker", marker, err);
+            return 1;
+        }
+        created_marker = 1;
     }
 
     /* Warn only once the launch is actually going to proceed. Placing this here
@@ -461,7 +517,7 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
         TerminateProcess(pi.hProcess, (UINT)-1);
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
-        DeleteFileW(marker);
+        if (created_marker) DeleteFileW(marker);
         return 1;
     }
 
@@ -472,7 +528,7 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
     GetExitCodeProcess(pi.hProcess, &exit_code);
     CloseHandle(pi.hProcess);
 
-    DeleteFileW(marker);
+    if (created_marker) DeleteFileW(marker);
     return (int)exit_code;
 }
 
