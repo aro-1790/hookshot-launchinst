@@ -23,6 +23,8 @@ static int validate_and_prepare_target(wchar_t **argv,
 
 static void finalize_operation(const wchar_t *target);
 
+static void report_global_auth_present(const wchar_t *dir);
+
 static int get_architecture_and_resource_id(const wchar_t *target,
                                            wchar_t *machine, size_t machine_sz,
                                            int *resource_id);
@@ -50,7 +52,7 @@ static void report_move_failure(const wchar_t *action, DWORD err)
 {
     report_err_code(action, err);
     if (err == ERROR_ACCESS_DENIED)
-        fwprintf(stderr, L"  Access denied - is the game running? Try running as administrator\n");
+        fwprintf(stderr, L"  Access denied - is the target still running? Try running as administrator\n");
 }
 
 static void print_inherited_resources_failed(void)
@@ -304,7 +306,7 @@ static void check_hookshot_dir(void)
     DWORD n = GetEnvironmentVariableW(L"HookshotDir", buf, PATHBUF);
 
     if (n == 0 || n >= PATHBUF) {
-        wprintf(L"  Warning: HookshotDir environment variable not set\n"
+        wprintf(L"  HookshotDir environment variable not set\n"
                 L"  Launcher will ask you to set HookshotDir on first run\n");
     }
 }
@@ -333,7 +335,7 @@ static void print_usage(const wchar_t *exe_name)
     wprintf(L"  %ls [install | uninstall | update] <path-to-exe>\n\n", stem);
     wprintf(L"Commands:\n");
     wprintf(L"  install     Replaces target executable with a Hookshot-compatible entrypoint\n");
-    wprintf(L"  uninstall   Restores original game executable\n");
+    wprintf(L"  uninstall   Restores original executable\n");
     wprintf(L"  update      Bring an existing launchinst installation up to date with the current embedded launcher\n\n");
     wprintf(L"Note: All operations target the original executable NAME, not the _hks_-prefixed one!\n");
 }
@@ -411,6 +413,8 @@ static int do_install(wchar_t **argv)
 
     copy_resources(hs_target, target);
 
+    report_global_auth_present(dir);
+
     finalize_operation(target);
     return 0;
 }
@@ -446,6 +450,8 @@ static int do_update(wchar_t **argv)
 
     copy_resources(hs_target, target);
 
+    report_global_auth_present(dir);
+
     finalize_operation(target);
     return 0;
 }
@@ -476,6 +482,21 @@ static void report_hookmodule_dlls_leftover(const wchar_t *dir)
     wprintf(L"  HookModules left over\n");
 }
 
+/* Hookshot treats a directory-wide .hookshot as authorization for every
+   executable in the folder. That file belongs to the user (or to the official
+   launcher), so this tool never creates or removes it, and never inspects it
+   beyond checking whether it exists - it is not ours to clean up, and it is the
+   launcher, not the installer, that consults it at run time. */
+static void report_global_auth_present(const wchar_t *dir)
+{
+    wchar_t path[PATHBUF];
+    _snwprintf(path, PATHBUF, L"%ls\\%ls", dir, AUTH_SUFFIX);
+    path[PATHBUF - 1] = L'\0';
+
+    if (file_exists_w(path))
+        wprintf(L"  Directory-wide .hookshot authorization file present\n");
+}
+
 static int do_uninstall(wchar_t **argv)
 {
     wchar_t target[PATHBUF];
@@ -484,6 +505,7 @@ static int do_uninstall(wchar_t **argv)
     wchar_t prefixed[PATHBUF];
     wchar_t hs_target[PATHBUF];
     wchar_t marker[PATHBUF];
+    wchar_t nowarn[PATHBUF];
     DWORD len;
 
     len = GetFullPathNameW(argv[2], PATHBUF, target, NULL);
@@ -517,14 +539,21 @@ static int do_uninstall(wchar_t **argv)
     }
     wprintf(L"  Original executable restored\n");
 
-    _snwprintf(marker, PATHBUF, L"%ls.hookshot", hs_target);
-    marker[PATHBUF - 1] = L'\0';
+    /* Both markers are exe-specific and go quietly. The authorization file is
+       normally removed by the launcher itself, so this is only a sweep-up for
+       the rare case it never got the chance; the compatibility-prompt opt-out
+       is a preference of ours rather than a straggler to report. */
+    path_with_suffix(hs_target, AUTH_SUFFIX, marker, PATHBUF);
     if (file_exists_w(marker)) {
-        if (DeleteFileW(marker)) {
-            wprintf(L"  Hookshot authorization file deleted\n");
-        }
+        DeleteFileW(marker);
     }
 
+    path_with_suffix(hs_target, NOWARN_SUFFIX, nowarn, PATHBUF);
+    if (file_exists_w(nowarn)) {
+        DeleteFileW(nowarn);
+    }
+
+    report_global_auth_present(dir);
     report_ini_leftover(dir);
     report_hookmodule_dlls_leftover(dir);
 

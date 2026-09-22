@@ -1,0 +1,7 @@
+#include <windows.h>
+
+/* The launcher needs a manifest of its own: Common Controls v6 for the
+   TaskDialog used by the compatibility-mode prompt. The installer copies the
+   target's icon and version resources into the launcher at install time, but it
+   never touches manifests, so this one survives installation. */
+1 RT_MANIFEST "hks-launch.manifest"

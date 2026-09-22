@@ -1,5 +1,13 @@
+/* TaskDialogIndirect and the TaskDialog structures are only declared for
+   Vista-and-later targets, and hks-common.h pulls in windows.h before anything
+   else, so the target version has to be set here. */
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif
+
 #include "hks-common.h"
 
+#include <commctrl.h>
 #include <objbase.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -42,6 +50,18 @@ _Static_assert(offsetof(HKS_INJECT_REQUEST, injectionResult) == 24,
 
 #define HKS_INJECT_SUCCESS 0u
 
+/* What the compatibility prompt decided. */
+typedef enum {
+    HKS_WARN_PROCEED = 0,   /* carry on (also the answer when no prompt is due) */
+    HKS_WARN_CANCEL         /* the user asked for the launch to be abandoned */
+} HKS_WARN_RESULT;
+
+/* Button identifiers for the prompt, picked so they cannot collide with the
+   IDOK/IDCANCEL that TaskDialog reports for a dismissed dialog. */
+#define HKS_BTN_CONTINUE 101
+#define HKS_BTN_NOWARN   102
+#define HKS_BTN_CANCEL   103
+
 static void show_error(const wchar_t *msg);
 static void show_err_str(const wchar_t *prefix, const wchar_t *path);
 static void show_err_code(const wchar_t *action, DWORD err);
@@ -50,7 +70,7 @@ static DWORD ensure_marker(const wchar_t *marker_path);
 static int prompt_and_store_hookshot_dir(wchar_t *out_dir, size_t dir_sz);
 static int locate_worker(wchar_t *out, size_t outsz);
 static int exe_has_compat_layer(const wchar_t *exe_path);
-static void warn_if_compat_layer_present(const wchar_t *target_path);
+static HKS_WARN_RESULT warn_if_compat_layer_present(const wchar_t *target_path);
 static void append_quoted_argument(wchar_t *out, size_t outsz, size_t *len, const wchar_t *text);
 static void build_target_command_line(const wchar_t *target, wchar_t *out, size_t outsz);
 static int relaunch_elevated(const wchar_t *self, const wchar_t *args);
@@ -191,22 +211,35 @@ static int exe_has_compat_layer(const wchar_t *exe_path)
     return 0;
 }
 
-/* The game process ends up under compatibility shims either way: layers active
-   on the launcher (for example, "Windows XP (Service Pack 2)") are inherited by
-   the game, and layers registered directly against the real executable apply to
-   it as well. Hookshot's own injection worker is isolated from the shims, but
-   HookModules are loaded into the game and may not behave correctly under them.
-   Warn the user, naming the source(s), and continue. */
-static void warn_if_compat_layer_present(const wchar_t *target_path)
+/* The target process ends up under compatibility shims either way: layers
+   active on the launcher (for example, "Windows XP (Service Pack 2)") are
+   inherited by the target, and layers registered directly against the real
+   executable apply to it as well. Hookshot's own injection worker is isolated
+   from the shims, but HookModules are loaded into the target and may not behave
+   correctly under them.
+
+   Warn the user, naming the source(s), and offer to continue, to stop asking for
+   this executable, or to abandon the launch. The opt-out is an empty, persistent
+   _hks_<exe>.nowarn marker: unlike the authorization marker the launcher never
+   removes it, and it suppresses the prompt for both sources. */
+static HKS_WARN_RESULT warn_if_compat_layer_present(const wchar_t *target_path)
 {
     wchar_t layer[PATHBUF];
+    wchar_t nowarn[PATHBUF];
     DWORD layer_len = GetEnvironmentVariableW(L"__COMPAT_LAYER", layer, PATHBUF);
     int on_launcher = (layer_len > 0 && layer_len < PATHBUF);
-    int on_target = exe_has_compat_layer(target_path);
+    int on_target;
     const wchar_t *source;
     wchar_t msg[512];
+    TASKDIALOGCONFIG cfg;
+    TASKDIALOG_BUTTON buttons[3];
+    int pressed = 0;
 
-    if (!on_launcher && !on_target) return;
+    path_with_suffix(target_path, NOWARN_SUFFIX, nowarn, PATHBUF);
+    if (file_exists_w(nowarn)) return HKS_WARN_PROCEED;
+
+    on_target = exe_has_compat_layer(target_path);
+    if (!on_launcher && !on_target) return HKS_WARN_PROCEED;
 
     if (on_launcher && on_target)
         source = L"both this launcher and the real executable";
@@ -222,7 +255,40 @@ static void warn_if_compat_layer_present(const wchar_t *target_path)
                source);
     msg[511] = L'\0';
 
-    MessageBoxW(NULL, msg, HKS_LAUNCHER_EXE_TITLE, MB_OK | MB_ICONWARNING);
+    ZeroMemory(&buttons, sizeof(buttons));
+    buttons[0].nButtonID = HKS_BTN_CONTINUE;
+    buttons[0].pszButtonText = L"Continue";
+    buttons[1].nButtonID = HKS_BTN_NOWARN;
+    buttons[1].pszButtonText = L"Don't warn for this executable again";
+    buttons[2].nButtonID = HKS_BTN_CANCEL;
+    buttons[2].pszButtonText = L"Cancel launch";
+
+    ZeroMemory(&cfg, sizeof(cfg));
+    cfg.cbSize = sizeof(cfg);
+    cfg.pszWindowTitle = HKS_LAUNCHER_EXE_TITLE;
+    cfg.pszMainIcon = TD_WARNING_ICON;
+    cfg.pszContent = msg;
+    cfg.cButtons = 3;
+    cfg.pButtons = buttons;
+    cfg.nDefaultButton = HKS_BTN_CONTINUE;
+
+    /* Without Common Controls v6 (see resource/hks-launch.manifest) there is no
+       TaskDialog to show. The prompt is only advisory, so the launch goes
+       ahead. */
+    if (FAILED(TaskDialogIndirect(&cfg, &pressed, NULL, NULL)))
+        return HKS_WARN_PROCEED;
+
+    switch (pressed) {
+    case HKS_BTN_NOWARN:
+        /* Best effort: if the marker cannot be written, the prompt simply comes
+           back on the next launch rather than blocking this one. */
+        ensure_marker(nowarn);
+        return HKS_WARN_PROCEED;
+    case HKS_BTN_CANCEL:
+        return HKS_WARN_CANCEL;
+    default:
+        return HKS_WARN_PROCEED;
+    }
 }
 
 static int relaunch_elevated(const wchar_t *self, const wchar_t *args)
@@ -303,7 +369,7 @@ static int run_worker(HANDLE target_process, HANDLE target_thread,
        2)") to a process based on its image path and exposes the active shims
        through the inherited __COMPAT_LAYER variable. The worker performs the
        injection, so it must not run under those shims. Temporarily clear the
-       variable for the worker spawn, then restore it. The game process is
+       variable for the worker spawn, then restore it. The target process is
        created separately and keeps its compatibility mode. */
     {
         wchar_t saved_layer[PATHBUF];
@@ -361,7 +427,7 @@ static int run_worker(HANDLE target_process, HANDLE target_thread,
     if ((uint32_t)req->injectionResult != HKS_INJECT_SUCCESS) {
         wchar_t msg[256];
         _snwprintf(msg, 256,
-                   L"Hookshot failed to inject the game.\n\n"
+                   L"Hookshot failed to inject the target.\n\n"
                    L"Result code: %llu\nExtended: %llu",
                    (unsigned long long)req->injectionResult,
                    (unsigned long long)req->extendedInjectionResult);
@@ -396,10 +462,10 @@ static void append_quoted_argument(wchar_t *out, size_t outsz, size_t *len, cons
     out[*len] = L'\0';
 }
 
-/* Builds the game's command line the way the official Hookshot launcher does:
+/* Builds the target's command line the way the official Hookshot launcher does:
    the real executable path first, then each of our own arguments, every element
    quoted with embedded quotes escaped. This keeps the raw command line (which
-   some games parse themselves) identical in shape to the stock launcher's. */
+   some programs parse themselves) identical in shape to the stock launcher's. */
 static void build_target_command_line(const wchar_t *target, wchar_t *out, size_t outsz)
 {
     int argc = 0;
@@ -439,6 +505,7 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
     PROCESS_INFORMATION pi;
     DWORD exit_code = 0;
     DWORD err;
+    HKS_WARN_RESULT warn_result;
     int created_marker = 0;
     int ok;
 
@@ -448,10 +515,9 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
     _snwprintf(target, PATHBUF, L"%ls\\%ls", dir, prefixed);
     target[PATHBUF - 1] = L'\0';
 
-    _snwprintf(marker, PATHBUF, L"%ls.hookshot", target);
-    marker[PATHBUF - 1] = L'\0';
+    path_with_suffix(target, AUTH_SUFFIX, marker, PATHBUF);
 
-    _snwprintf(dirwide_marker, PATHBUF, L"%ls\\.hookshot", dir);
+    _snwprintf(dirwide_marker, PATHBUF, L"%ls\\%ls", dir, AUTH_SUFFIX);
     dirwide_marker[PATHBUF - 1] = L'\0';
 
     build_target_command_line(target, cmdline, PATHBUF * 2);
@@ -473,8 +539,9 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
     si.cb = sizeof(si);
     ZeroMemory(&pi, sizeof(pi));
 
-    /* Let the game inherit this launcher's working directory, as the official
-       Hookshot launcher does, instead of forcing it to the game directory. */
+    /* Let the target inherit this launcher's working directory, as the official
+       Hookshot launcher does, instead of forcing it to the executable's
+       directory. */
     if (!CreateProcessW(target, cmdline, NULL, NULL, FALSE,
                         CREATE_SUSPENDED, NULL, NULL, &si, &pi)) {
         err = GetLastError();
@@ -487,7 +554,7 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
 
     /* Hookshot accepts either an application-specific <exe>.hookshot or a
        directory-wide .hookshot as authorization. Only create the former when
-       neither already exists, so an already-authorized game folder is not
+       neither already exists, so an already-authorized directory is not
        written to (and never needs elevation just to authorize). */
     if (!file_exists_w(marker) && !file_exists_w(dirwide_marker)) {
         err = ensure_marker(marker);
@@ -505,11 +572,20 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
         created_marker = 1;
     }
 
-    /* Warn only once the launch is actually going to proceed. Placing this here
-       rather than at startup means an elevation re-launch (which supersedes the
-       instance that requested it) does not re-trigger the warning: only the
-       instance that is about to inject the game reaches this point. */
-    warn_if_compat_layer_present(target);
+    /* Prompt only once the launch is actually going to proceed. Placing this
+       here rather than at startup means an elevation re-launch (which supersedes
+       the instance that requested it) does not re-trigger the prompt: only the
+       instance that is about to inject the target reaches this point. */
+    warn_result = warn_if_compat_layer_present(target);
+    if (warn_result == HKS_WARN_CANCEL) {
+        /* A deliberate choice rather than a failure, so this is quiet and
+           reports success. The authorization marker we created goes with it. */
+        TerminateProcess(pi.hProcess, (UINT)-1);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        if (created_marker) DeleteFileW(marker);
+        return 0;
+    }
 
     ok = run_worker(pi.hProcess, pi.hThread, worker);
 

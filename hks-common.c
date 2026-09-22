@@ -36,6 +36,13 @@ int has_target_prefix(const wchar_t *basename)
     return wcsncmp(basename, TARGET_PREFIX, wcslen(TARGET_PREFIX)) == 0;
 }
 
+void path_with_suffix(const wchar_t *path, const wchar_t *suffix, wchar_t *out, size_t outsz)
+{
+    if (!out || outsz == 0) return;
+    _snwprintf(out, outsz, L"%ls%ls", path, suffix);
+    out[outsz - 1] = L'\0';
+}
+
 int get_pe_machine(const wchar_t *path, wchar_t *out, size_t outsz)
 {
     HANDLE h;

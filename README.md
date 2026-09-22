@@ -24,12 +24,12 @@ I have a few bugbears with the original launcher, mainly that it's quite the dir
 >
 > Commands:
 >   install     Replaces target executable with a Hookshot-compatible entrypoint
->   uninstall   Restores original game executable
+>   uninstall   Restores original executable
 >   update      Bring an existing launchinst installation up to date with the current embedded launcher
 > ```
-> * `install` will determine architecture and copy from its internal resources the actual launcher required for this game, handling the rename of the original to the format the launcher expects and renaming the launcher to take its place
+> * `install` will determine architecture and copy from its internal resources the actual launcher required for the target executable, handling the rename of the original to the format the launcher expects and renaming the launcher to take its place
 > * It also copies icon and version resources from the original executable to make it look good
-> * `uninstall` will of course reverse this, and also warn you of any straggler files that you may wish to delete afterward
+> * `uninstall` will of course reverse this, and also note any straggler files that you may wish to delete afterward
 > * `update` works similarly to `install`, but will refresh an existing installation in-place (good to do if you updated hookshot-launchinst)
 
 **About the executables**
@@ -47,7 +47,9 @@ I have a few bugbears with the original launcher, mainly that it's quite the dir
 > * To remove the bucket if you no longer want it: `scoop bucket rm hookshot-launchinst`
 
 **Other details**
-> * The launcher itself has a `%HookshotDir%` check- if it doesn't exist, it'll ask you to choose where your root Hookshot directory is (the directory that contains Win32/x64) instead of having to copy over the Hookshot DLL and EXE to every game dir
-> * This launcher also automatically creates the Hookshot authorization file (unless one is already present), but cleans up the one it creates when the process is done unlike the official launcher
-> * It's a 0KB file, rewrites won't hurt, and it gets rid of a file that only needs to exist at runtime
-> * I use the `_hks_` prefix for the original executable- it's much shorter than the official launcher's `_HookshotLauncher_` prefix, and leaves the game's original executable name intact at the end (some games check their own name, and a suffix trips them up)
+> * The launcher itself has a `%HookshotDir%` check- if it doesn't exist, it'll ask you to choose where your root Hookshot directory is (the directory that contains Win32/x64) instead of having to copy over the Hookshot DLL and EXE to every target dir
+> * This launcher also automatically creates the Hookshot authorization file (unless one is already present), but cleans up the one it creates when the process is done- unlike the official launcher
+> * The launcher also warns about Windows compatibility modes- set on itself, on the real executable (or both!), since HookModules may not behave even though I protect the Hookshot worker from compatibility shims (DLLs are obviously beholden to the shim on its executable parent)
+> * You get a choice- you can `Continue` on, but it'll ask you again unless you remove the shims; you can `Cancel`, which will stop it in its tracks; or you can choose "`Don't warn for this executable again`", which will write a persistent marker file `_hks_<exe>.nowarn` so it won't bother you again unless the marker is removed
+> * All hookshot-launchinst commands note when a directory-wide `.hookshot` authorization file is present in the target process' folder- it's never created or removed by this tool
+> * I use the `_hks_` prefix for the original executable- it's much shorter than the official launcher's `_HookshotLauncher_` prefix, and leaves the original executable's name intact at the end (some programs check their own name, and a suffix trips them up)
