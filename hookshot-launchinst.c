@@ -143,11 +143,14 @@ static int copy_type(HMODULE hSrc, HANDLE hUpdate, LPCWSTR type)
     return ctx.copied;
 }
 
+/* #pragma pack is portable; __attribute__((packed)) is GCC-only. */
+#pragma pack(push, 1)
+
 typedef struct {
     WORD idReserved;
     WORD idType;
     WORD idCount;
-} __attribute__((packed)) GRPICONDIR;
+} GRPICONDIR;
 
 typedef struct {
     BYTE bWidth;
@@ -158,7 +161,9 @@ typedef struct {
     WORD wBitCount;
     DWORD dwBytesInRes;
     WORD nID;
-} __attribute__((packed)) GRPICONDIRENTRY;
+} GRPICONDIRENTRY;
+
+#pragma pack(pop)
 
 typedef struct {
     HMODULE hSrc;
@@ -609,7 +614,7 @@ static int validate_and_prepare_target(wchar_t **argv,
                                       wchar_t *machine, size_t machine_sz,
                                       int *resource_id)
 {
-    DWORD len = GetFullPathNameW(argv[2], target_sz, target, NULL);
+    DWORD len = GetFullPathNameW(argv[2], (DWORD)target_sz, target, NULL);
     if (len == 0 || len >= target_sz) {
         report_invalid_target_path();
         return 1;

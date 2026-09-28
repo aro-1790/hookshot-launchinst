@@ -6,6 +6,6 @@ bucket/hookshot-launchinst.json.in
 .vscode/
 
 # Build artifacts & compiled binaries
-*.o
 *.exe
+obj/
 release/

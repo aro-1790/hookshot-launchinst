@@ -1,0 +1,109 @@
+# hookshot-launchinst - launcher and installer, 32-bit and 64-bit, built with MSVC.
+# Run build.bat, or nmake /f build.nmake with the toolchain environment active.
+# Both targets are cross-built from one host toolset; nmake upcases env names.
+# ------------------------------------------------------------------
+
+!IFNDEF HOSTARCH
+!IFDEF PROCESSOR_ARCHITEW6432
+HOSTARCH = x64
+!ELSEIF "$(PROCESSOR_ARCHITECTURE)" == "x86"
+HOSTARCH = x86
+!ELSE
+HOSTARCH = x64
+!ENDIF
+!ENDIF
+
+CL32    = "$(VCTOOLSINSTALLDIR)bin\Host$(HOSTARCH)\x86\cl.exe"
+CL64    = "$(VCTOOLSINSTALLDIR)bin\Host$(HOSTARCH)\x64\cl.exe"
+DUMPBIN = "$(VCTOOLSINSTALLDIR)bin\Host$(HOSTARCH)\x64\dumpbin.exe"
+RC      = rc.exe
+
+# LIB lists x86 first, so each link names its own library directories.
+LIBPATH32 = /LIBPATH:"$(VCTOOLSINSTALLDIR)lib\x86" \
+            /LIBPATH:"$(WINDOWSSDKDIR)Lib\$(WINDOWSSDKVERSION)\ucrt\x86" \
+            /LIBPATH:"$(WINDOWSSDKDIR)Lib\$(WINDOWSSDKVERSION)\um\x86"
+LIBPATH64 = /LIBPATH:"$(VCTOOLSINSTALLDIR)lib\x64" \
+            /LIBPATH:"$(WINDOWSSDKDIR)Lib\$(WINDOWSSDKVERSION)\ucrt\x64" \
+            /LIBPATH:"$(WINDOWSSDKDIR)Lib\$(WINDOWSSDKVERSION)\um\x64"
+
+# /MT keeps the executables self-contained; CRT and SDK headers come from INCLUDE.
+BASE = /nologo /O1 /MT /W3 /std:c11 /DUNICODE /D_UNICODE \
+       /D_CRT_SECURE_NO_WARNINGS /D_CRT_NONSTDC_NO_WARNINGS
+
+LIBS = shell32.lib ole32.lib comctl32.lib user32.lib advapi32.lib kernel32.lib
+
+LAUNCH_SRC  = hks-launch.c
+INSTALL_SRC = hookshot-launchinst.c
+COMMON_SRC  = hks-common.c
+COMMON_HDR  = hks-common.h
+
+RC_IN     = resource\hookshot-launchinst.rc.in
+LAUNCH_RC = resource\hks-launch.rc
+
+LAUNCH_RES = obj\hks-launch.res
+GEN_RC32   = obj\hookshot-launchinst32.gen.rc
+GEN_RC64   = obj\hookshot-launchinst64.gen.rc
+RES32      = obj\install32.res
+RES64      = obj\install64.res
+
+LAUNCHER32 = hks-launch32.exe
+LAUNCHER64 = hks-launch64.exe
+EXE32      = release\hookshot-launchinst32.exe
+EXE64      = release\hookshot-launchinst64.exe
+
+all: $(EXE32) $(EXE64)
+
+obj:
+	@if not exist obj mkdir obj
+
+obj\x86: obj
+	@if not exist obj\x86 mkdir obj\x86
+
+obj\x64: obj
+	@if not exist obj\x64 mkdir obj\x64
+
+release:
+	@if not exist release mkdir release
+
+$(LAUNCH_RES): $(LAUNCH_RC) resource\hks-launch.manifest obj
+	$(RC) /nologo /I . /I resource /fo$@ $(LAUNCH_RC)
+
+$(GEN_RC32): $(RC_IN) resource\version.txt
+	@call build.bat --genrc 32
+
+$(GEN_RC64): $(RC_IN) resource\version.txt
+	@call build.bat --genrc 64
+
+# The installer carries both launchers as resources, so they are built first.
+$(RES32): $(GEN_RC32) $(LAUNCHER32) obj
+	$(RC) /nologo /I . /I resource /dHKS_INSTALLER_32ONLY /fo$@ $(GEN_RC32)
+
+$(RES64): $(GEN_RC64) $(LAUNCHER64) obj
+	$(RC) /nologo /I . /I resource /fo$@ $(GEN_RC64)
+
+$(LAUNCHER32): $(LAUNCH_SRC) $(COMMON_SRC) $(COMMON_HDR) $(LAUNCH_RES) obj\x86
+	$(CL32) $(BASE) /DHKS_LAUNCH_BITS=32 /Foobj\x86\ /Fe$@ $(LAUNCH_SRC) $(COMMON_SRC) $(LAUNCH_RES) /link /SUBSYSTEM:WINDOWS $(LIBS) $(LIBPATH32)
+	@$(DUMPBIN) /headers $@ | findstr /C:"14C machine" >NUL || (echo Error: $@ is not a 32-bit binary & exit 1)
+
+$(LAUNCHER64): $(LAUNCH_SRC) $(COMMON_SRC) $(COMMON_HDR) $(LAUNCH_RES) obj\x64
+	$(CL64) $(BASE) /DHKS_LAUNCH_BITS=64 /Foobj\x64\ /Fe$@ $(LAUNCH_SRC) $(COMMON_SRC) $(LAUNCH_RES) /link /SUBSYSTEM:WINDOWS $(LIBS) $(LIBPATH64)
+	@$(DUMPBIN) /headers $@ | findstr /C:"8664 machine" >NUL || (echo Error: $@ is not a 64-bit binary & exit 1)
+
+$(EXE32): $(INSTALL_SRC) $(COMMON_SRC) $(COMMON_HDR) $(RES32) obj\x86 release
+	$(CL32) $(BASE) /DHKS_INSTALLER_32ONLY /Foobj\x86\ /Fe$@ $(INSTALL_SRC) $(COMMON_SRC) $(RES32) /link /SUBSYSTEM:CONSOLE $(LIBS) $(LIBPATH32)
+	@$(DUMPBIN) /headers $@ | findstr /C:"14C machine" >NUL || (echo Error: $@ is not a 32-bit binary & exit 1)
+
+$(EXE64): $(INSTALL_SRC) $(COMMON_SRC) $(COMMON_HDR) $(RES64) obj\x64 release
+	$(CL64) $(BASE) /Foobj\x64\ /Fe$@ $(INSTALL_SRC) $(COMMON_SRC) $(RES64) /link /SUBSYSTEM:CONSOLE $(LIBS) $(LIBPATH64)
+	@$(DUMPBIN) /headers $@ | findstr /C:"8664 machine" >NUL || (echo Error: $@ is not a 64-bit binary & exit 1)
+
+rebuild:
+	$(MAKE) /NOLOGO /f build.nmake clean HOSTARCH=$(HOSTARCH)
+	$(MAKE) /NOLOGO /f build.nmake HOSTARCH=$(HOSTARCH)
+
+clean:
+	@if exist obj rmdir /s /q obj
+	@if exist $(LAUNCHER32) del /q $(LAUNCHER32)
+	@if exist $(LAUNCHER64) del /q $(LAUNCHER64)
+	@if exist $(EXE32) del /q $(EXE32)
+	@if exist $(EXE64) del /q $(EXE64)
