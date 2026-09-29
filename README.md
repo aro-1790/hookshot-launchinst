@@ -37,6 +37,7 @@ I have a few bugbears with the original launcher, mainly that it's quite the dir
 > * `hookshot-launchinst32.exe` is for 32-bit systems and it only packs the 32-bit launcher
 > * `hookshot-launchinst64.exe` covers all your use cases on a modern machine
 > * The launcher(s) are contained within the above executables as resources extracted on-demand
+> * Needs the VC++ 2022 redist- [x86](https://aka.ms/vc14/vc_redist.x86.exe) for 32-bit systems, plus [x64](https://aka.ms/vc14/vc_redist.x64.exe) for 64-bit ones
 
 **Installing with Scoop**
 > * This repo also doubles as a [Scoop](https://scoop.sh) bucket for this project's manifest
