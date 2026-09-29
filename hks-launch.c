@@ -69,8 +69,8 @@ static void show_err_code2(const wchar_t *action, const wchar_t *path, DWORD err
 static DWORD ensure_marker(const wchar_t *marker_path);
 static int prompt_and_store_hookshot_dir(wchar_t *out_dir, size_t dir_sz);
 static int locate_worker(wchar_t *out, size_t outsz);
-static int exe_has_compat_layer(const wchar_t *exe_path);
-static HKS_WARN_RESULT warn_if_compat_layer_present(const wchar_t *target_path);
+static HKS_WARN_RESULT warn_if_compat_layer_present(const wchar_t *target_path,
+                                                    const wchar_t *self_path);
 static void append_quoted_argument(wchar_t *out, size_t outsz, size_t *len, const wchar_t *text);
 static void build_target_command_line(const wchar_t *target, wchar_t *out, size_t outsz);
 static int relaunch_elevated(const wchar_t *self, const wchar_t *args);
@@ -174,18 +174,79 @@ static int locate_worker(wchar_t *out, size_t outsz)
     return 1;
 }
 
-/* Returns non-zero if the specified executable has a Windows compatibility
-   layer registered against it (per-user or machine-wide). Compatibility modes
-   configured through the file's Properties dialog are stored in the
-   AppCompatFlags\Layers key, keyed by full executable path. */
-static int exe_has_compat_layer(const wchar_t *exe_path)
+/* Compatibility tokens that can plausibly upset a HookModule: OS-version lies
+   (WIN*, NT*, VISTA*) and the display and graphics shims. Elevation, DPI
+   awareness and Windows' own Detectors* telemetry tokens are not listed, so
+   they cannot raise the prompt. */
+static int is_noteworthy_shim_token(const wchar_t *token, size_t len)
+{
+    static const wchar_t *kGraphics[] = {
+        L"DWM8AND16BITMITIGATION", L"DISABLEDWM", L"DISABLETHEMES",
+        L"256COLOR", L"16BITCOLOR", L"640X480",
+        L"DISABLEDXMAXIMIZEDWINDOWEDMODE"
+    };
+    size_t i;
+
+    if (len == 0) return 0;
+
+    if ((len >= 3 && _wcsnicmp(token, L"WIN", 3) == 0) ||
+        (len >= 2 && _wcsnicmp(token, L"NT", 2) == 0) ||
+        (len >= 5 && _wcsnicmp(token, L"VISTA", 5) == 0))
+        return 1;
+
+    for (i = 0; i < sizeof(kGraphics) / sizeof(kGraphics[0]); ++i) {
+        size_t n = wcslen(kGraphics[i]);
+        if (len == n && _wcsnicmp(token, kGraphics[i], n) == 0)
+            return 1;
+    }
+
+    return 0;
+}
+
+/* Copies the noteworthy tokens of a space-separated layer list into out,
+   space-separated. The '$' and '~' markers are prefixes, not tokens. */
+static void collect_shim_tokens(const wchar_t *layers, wchar_t *out, size_t outsz)
+{
+    const wchar_t *p = layers;
+    size_t len;
+
+    if (layers == NULL || out == NULL || outsz == 0) return;
+    out[0] = L'\0';
+
+    while (*p != L'\0') {
+        while (*p == L' ' || *p == L'\t') ++p;
+        if (*p == L'\0') break;
+
+        len = 0;
+        while (p[len] != L'\0' && p[len] != L' ' && p[len] != L'\t') ++len;
+        while (len > 0 && (p[0] == L'$' || p[0] == L'~')) {
+            ++p;
+            --len;
+        }
+
+        if (is_noteworthy_shim_token(p, len) &&
+            wcslen(out) + (out[0] ? 1u : 0u) + len + 1 <= outsz) {
+            if (out[0]) wcscat(out, L" ");
+            wcsncat(out, p, len);
+        }
+
+        p += len;
+    }
+}
+
+/* Copies <exe_path>'s compatibility layer value data, if it has one. The value
+   name is the full executable path, in the AppCompatFlags\Layers key. */
+static int layer_value_for_exe(const wchar_t *exe_path, wchar_t *out, size_t outsz)
 {
     static const wchar_t kLayersKey[] =
         L"Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers";
     static const HKEY kHives[] = { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE };
     static const REGSAM kViews[] = { 0, KEY_WOW64_64KEY, KEY_WOW64_32KEY };
     size_t i, j;
+    DWORD cap = (DWORD)(outsz * sizeof(wchar_t));
 
+    if (out == NULL || outsz == 0) return 0;
+    out[0] = L'\0';
     if (exe_path == NULL) return 0;
 
     for (i = 0; i < sizeof(kHives) / sizeof(kHives[0]); ++i) {
@@ -199,61 +260,101 @@ static int exe_has_compat_layer(const wchar_t *exe_path)
                 continue;
 
             if (RegQueryValueExW(hKey, exe_path, NULL, &type, NULL, &size) == ERROR_SUCCESS &&
-                (type == REG_SZ || type == REG_EXPAND_SZ)) {
-                RegCloseKey(hKey);
-                return 1;
+                (type == REG_SZ || type == REG_EXPAND_SZ) &&
+                size >= sizeof(wchar_t) && size <= cap) {
+                if (RegQueryValueExW(hKey, exe_path, NULL, &type, (LPBYTE)out, &size) == ERROR_SUCCESS) {
+                    out[outsz - 1] = L'\0';
+                    RegCloseKey(hKey);
+                    return 1;
+                }
             }
 
             RegCloseKey(hKey);
         }
     }
 
+    out[0] = L'\0';
     return 0;
 }
 
-/* The target process ends up under compatibility shims either way: layers
-   active on the launcher (for example, "Windows XP (Service Pack 2)") are
-   inherited by the target, and layers registered directly against the real
-   executable apply to it as well. Hookshot's own injection worker is isolated
-   from the shims, but HookModules are loaded into the target and may not behave
-   correctly under them.
+/* The target ends up under compatibility shims either way: layers active in the
+   launcher process are inherited by the target, and layers registered directly
+   against the real executable apply to it as well. Hookshot's own injection
+   worker is isolated from the shims, but HookModules are loaded into the target
+   and may not behave correctly under them.
 
-   Warn the user, naming the source(s), and offer to continue, to stop asking for
-   this executable, or to abandon the launch. The opt-out is an empty, persistent
-   _hks_<exe>.nowarn marker: unlike the authorization marker the launcher never
-   removes it, and it suppresses the prompt for both sources. */
-static HKS_WARN_RESULT warn_if_compat_layer_present(const wchar_t *target_path)
+   Warn the user, naming the source(s) and the tokens. The opt-out is an empty,
+   persistent _hks_<exe>.nowarn marker: unlike the authorization marker the
+   launcher never removes it, and it suppresses the prompt for both sources. */
+static HKS_WARN_RESULT warn_if_compat_layer_present(const wchar_t *target_path,
+                                                    const wchar_t *self_path)
 {
-    wchar_t layer[PATHBUF];
     wchar_t nowarn[PATHBUF];
-    DWORD layer_len = GetEnvironmentVariableW(L"__COMPAT_LAYER", layer, PATHBUF);
-    int on_launcher = (layer_len > 0 && layer_len < PATHBUF);
-    int on_target;
-    const wchar_t *source;
-    wchar_t msg[512];
+    wchar_t env_raw[PATHBUF];
+    wchar_t self_raw[PATHBUF];
+    wchar_t target_raw[PATHBUF];
+    wchar_t env_tokens[512];
+    wchar_t self_tokens[512];
+    wchar_t target_tokens[512];
+    wchar_t self_line[512];
+    wchar_t target_line[512];
+    wchar_t msg[1024];
+    wchar_t details[PATHBUF * 3];
+    wchar_t fallback[1152];
     TASKDIALOGCONFIG cfg;
     TASKDIALOG_BUTTON buttons[3];
+    HRESULT hr;
     int pressed = 0;
 
     path_with_suffix(target_path, NOWARN_SUFFIX, nowarn, PATHBUF);
     if (file_exists_w(nowarn)) return HKS_WARN_PROCEED;
 
-    on_target = exe_has_compat_layer(target_path);
-    if (!on_launcher && !on_target) return HKS_WARN_PROCEED;
+    env_raw[0] = L'\0';
+    if (GetEnvironmentVariableW(L"__COMPAT_LAYER", env_raw, PATHBUF) >= PATHBUF)
+        env_raw[0] = L'\0';
 
-    if (on_launcher && on_target)
-        source = L"both this launcher and the real executable";
-    else if (on_target)
-        source = L"the real executable";
-    else
-        source = L"this launcher";
+    layer_value_for_exe(self_path, self_raw, PATHBUF);
+    layer_value_for_exe(target_path, target_raw, PATHBUF);
 
-    _snwprintf(msg, 512,
-               L"A compatibility mode is set on %ls. "
-               L"Some HookModules might not play nice with it "
-               L"(turn off if having issues).",
-               source);
-    msg[511] = L'\0';
+    collect_shim_tokens(env_raw, env_tokens, 512);
+    collect_shim_tokens(self_raw, self_tokens, 512);
+    collect_shim_tokens(target_raw, target_tokens, 512);
+
+    if (!env_tokens[0] && !self_tokens[0] && !target_tokens[0])
+        return HKS_WARN_PROCEED;
+
+    self_line[0] = L'\0';
+    target_line[0] = L'\0';
+
+    if (self_tokens[0])
+        _snwprintf(self_line, 512, L"The launcher is configured with: %ls",
+                   self_tokens);
+    else if (env_tokens[0])
+        _snwprintf(self_line, 512, L"The launcher process is running with: %ls",
+                   env_tokens);
+
+    if (target_tokens[0])
+        _snwprintf(target_line, 512, L"The real executable is configured with: %ls",
+                   target_tokens);
+
+    self_line[511] = L'\0';
+    target_line[511] = L'\0';
+
+    _snwprintf(msg, 1024,
+               L"%ls%ls%ls\n\nSome HookModules might not play nice with them.\n"
+               L"(Turn them off for this program if you have issues.)",
+               self_line,
+               (self_line[0] && target_line[0]) ? L"\n" : L"",
+               target_line);
+    msg[1023] = L'\0';
+
+    _snwprintf(details, PATHBUF * 3,
+               L"__COMPAT_LAYER = %ls\nLayers (launcher) = %ls\n"
+               L"Layers (real executable) = %ls",
+               env_raw[0] ? env_raw : L"(not set)",
+               self_raw[0] ? self_raw : L"(none)",
+               target_raw[0] ? target_raw : L"(none)");
+    details[(PATHBUF * 3) - 1] = L'\0';
 
     ZeroMemory(&buttons, sizeof(buttons));
     buttons[0].nButtonID = HKS_BTN_CONTINUE;
@@ -267,16 +368,35 @@ static HKS_WARN_RESULT warn_if_compat_layer_present(const wchar_t *target_path)
     cfg.cbSize = sizeof(cfg);
     cfg.pszWindowTitle = HKS_LAUNCHER_EXE_TITLE;
     cfg.pszMainIcon = TD_WARNING_ICON;
+    cfg.pszMainInstruction = L"Compatibility shims are active for this launch";
     cfg.pszContent = msg;
+    cfg.pszExpandedInformation = details;
+    cfg.pszExpandedControlText = L"Details";
+    cfg.pszCollapsedControlText = L"Hide details";
     cfg.cButtons = 3;
     cfg.pButtons = buttons;
     cfg.nDefaultButton = HKS_BTN_CONTINUE;
 
-    /* Without Common Controls v6 (see resource/hks-launch.manifest) there is no
-       TaskDialog to show. The prompt is only advisory, so the launch goes
-       ahead. */
-    if (FAILED(TaskDialogIndirect(&cfg, &pressed, NULL, NULL)))
-        return HKS_WARN_PROCEED;
+    hr = TaskDialogIndirect(&cfg, &pressed, NULL, NULL);
+
+    /* A static import means Common Controls v6 exists whenever this process
+       runs, so a failure is the call itself being refused, and an unexpected
+       button is a dialog torn down without an answer: ask again plainly. */
+    if (FAILED(hr) ||
+        (pressed != HKS_BTN_CONTINUE && pressed != HKS_BTN_NOWARN &&
+         pressed != HKS_BTN_CANCEL)) {
+        /* Nothing of ours owns the dialog, so borrow the focused window: an owned
+           dialog stays above the window the user launched from. */
+        HWND owner = GetForegroundWindow();
+
+        _snwprintf(fallback, 1152, L"%ls\n\n%ls", cfg.pszMainInstruction, msg);
+        fallback[1151] = L'\0';
+
+        return (IDCANCEL == MessageBoxW(owner, fallback, HKS_LAUNCHER_EXE_TITLE,
+                                        MB_OKCANCEL | MB_ICONWARNING | MB_SETFOREGROUND))
+                   ? HKS_WARN_CANCEL
+                   : HKS_WARN_PROCEED;
+    }
 
     switch (pressed) {
     case HKS_BTN_NOWARN:
@@ -576,7 +696,7 @@ static int do_launcher(const wchar_t *self, const wchar_t *args)
        here rather than at startup means an elevation re-launch (which supersedes
        the instance that requested it) does not re-trigger the prompt: only the
        instance that is about to inject the target reaches this point. */
-    warn_result = warn_if_compat_layer_present(target);
+    warn_result = warn_if_compat_layer_present(target, self);
     if (warn_result == HKS_WARN_CANCEL) {
         /* A deliberate choice rather than a failure, so this is quiet and
            reports success. The authorization marker we created goes with it. */

@@ -26,8 +26,7 @@ LIBPATH64 = /LIBPATH:"$(VCTOOLSINSTALLDIR)lib\x64" \
             /LIBPATH:"$(WINDOWSSDKDIR)Lib\$(WINDOWSSDKVERSION)\ucrt\x64" \
             /LIBPATH:"$(WINDOWSSDKDIR)Lib\$(WINDOWSSDKVERSION)\um\x64"
 
-# /MT keeps the executables self-contained; CRT and SDK headers come from INCLUDE.
-BASE = /nologo /O1 /MT /W3 /std:c11 /DUNICODE /D_UNICODE \
+BASE = /nologo /O1 /MD /W3 /std:c11 /DUNICODE /D_UNICODE \
        /D_CRT_SECURE_NO_WARNINGS /D_CRT_NONSTDC_NO_WARNINGS
 
 LIBS = shell32.lib ole32.lib comctl32.lib user32.lib advapi32.lib kernel32.lib
