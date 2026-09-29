@@ -2,9 +2,6 @@
 *.sh
 bucket/hookshot-launchinst.json.in
 
-# Local editor settings
-.vscode/
-
 # Build artifacts & compiled binaries
 *.exe
 obj/
