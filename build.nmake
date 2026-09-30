@@ -1,30 +1,54 @@
 # hookshot-launchinst - launcher and installer, 32-bit and 64-bit, built with MSVC.
 # Run build.bat, or nmake /f build.nmake with the toolchain environment active.
-# Both targets are cross-built from one host toolset; nmake upcases env names.
+# Each target arch picks its own host toolset; nmake upcases env names.
 # ------------------------------------------------------------------
 
-!IFNDEF HOSTARCH
-!IFDEF PROCESSOR_ARCHITEW6432
-HOSTARCH = x64
-!ELSEIF "$(PROCESSOR_ARCHITECTURE)" == "x86"
-HOSTARCH = x86
-!ELSE
-HOSTARCH = x64
+# Host toolset: the 64-bit host first, the 32-bit host as fallback. The two target
+# arches resolve separately, so a host that lacks one target still builds it from
+# the other host when that host has it.
+!IFNDEF HOST32
+HOST32 =
+!IF EXIST("$(VCTOOLSINSTALLDIR)bin\Hostx64\x86\cl.exe")
+HOST32 = x64
+!ELSEIF EXIST("$(VCTOOLSINSTALLDIR)bin\Hostx86\x86\cl.exe")
+HOST32 = x86
 !ENDIF
 !ENDIF
 
-CL32    = "$(VCTOOLSINSTALLDIR)bin\Host$(HOSTARCH)\x86\cl.exe"
-CL64    = "$(VCTOOLSINSTALLDIR)bin\Host$(HOSTARCH)\x64\cl.exe"
-DUMPBIN = "$(VCTOOLSINSTALLDIR)bin\Host$(HOSTARCH)\x64\dumpbin.exe"
-RC      = rc.exe
+!IFNDEF HOST64
+HOST64 =
+!IF EXIST("$(VCTOOLSINSTALLDIR)bin\Hostx64\x64\cl.exe")
+HOST64 = x64
+!ELSEIF EXIST("$(VCTOOLSINSTALLDIR)bin\Hostx86\x64\cl.exe")
+HOST64 = x86
+!ENDIF
+!ENDIF
+
+# Each target is verified with the linker from its own toolset dir.
+CL32    = "$(VCTOOLSINSTALLDIR)bin\Host$(HOST32)\x86\cl.exe"
+CL64    = "$(VCTOOLSINSTALLDIR)bin\Host$(HOST64)\x64\cl.exe"
+LINK32  = "$(VCTOOLSINSTALLDIR)bin\Host$(HOST32)\x86\link.exe"
+LINK64  = "$(VCTOOLSINSTALLDIR)bin\Host$(HOST64)\x64\link.exe"
+
+# rc.exe comes from the SDK, whose bin dir carries an x86 or an x64 host subdir
+# depending on which pieces of the SDK are installed.
+!IF EXIST("$(WINDOWSSDKDIR)Bin\$(WINDOWSSDKVERSION)\x86\rc.exe")
+RC = "$(WINDOWSSDKDIR)Bin\$(WINDOWSSDKVERSION)\x86\rc.exe"
+!ELSE
+RC = "$(WINDOWSSDKDIR)Bin\$(WINDOWSSDKVERSION)\x64\rc.exe"
+!ENDIF
+
+# Library roots, named once: the link paths and the availability gates both use them.
+VCLIB  = $(VCTOOLSINSTALLDIR)lib
+SDKLIB = $(WINDOWSSDKDIR)Lib\$(WINDOWSSDKVERSION)
 
 # LIB lists x86 first, so each link names its own library directories.
-LIBPATH32 = /LIBPATH:"$(VCTOOLSINSTALLDIR)lib\x86" \
-            /LIBPATH:"$(WINDOWSSDKDIR)Lib\$(WINDOWSSDKVERSION)\ucrt\x86" \
-            /LIBPATH:"$(WINDOWSSDKDIR)Lib\$(WINDOWSSDKVERSION)\um\x86"
-LIBPATH64 = /LIBPATH:"$(VCTOOLSINSTALLDIR)lib\x64" \
-            /LIBPATH:"$(WINDOWSSDKDIR)Lib\$(WINDOWSSDKVERSION)\ucrt\x64" \
-            /LIBPATH:"$(WINDOWSSDKDIR)Lib\$(WINDOWSSDKVERSION)\um\x64"
+LIBPATH32 = /LIBPATH:"$(VCLIB)\x86" \
+            /LIBPATH:"$(SDKLIB)\ucrt\x86" \
+            /LIBPATH:"$(SDKLIB)\um\x86"
+LIBPATH64 = /LIBPATH:"$(VCLIB)\x64" \
+            /LIBPATH:"$(SDKLIB)\ucrt\x64" \
+            /LIBPATH:"$(SDKLIB)\um\x64"
 
 BASE = /nologo /O1 /MD /W3 /std:c11 /DUNICODE /D_UNICODE \
        /D_CRT_SECURE_NO_WARNINGS /D_CRT_NONSTDC_NO_WARNINGS
@@ -40,8 +64,7 @@ RC_IN     = resource\hookshot-launchinst.rc.in
 LAUNCH_RC = resource\hks-launch.rc
 
 LAUNCH_RES = obj\hks-launch.res
-GEN_RC32   = obj\hookshot-launchinst32.gen.rc
-GEN_RC64   = obj\hookshot-launchinst64.gen.rc
+GEN_RC     = obj\hookshot-launchinst.gen.rc
 RES32      = obj\install32.res
 RES64      = obj\install64.res
 
@@ -50,7 +73,39 @@ LAUNCHER64 = hks-launch64.exe
 EXE32      = release\hookshot-launchinst32.exe
 EXE64      = release\hookshot-launchinst64.exe
 
-all: $(EXE32) $(EXE64)
+# Both arches need a compiler that can emit their code plus the libraries from both
+# the toolset and the SDK. x86 is mandatory; a missing x64 half is named below.
+X86_LIBS =
+!IF EXIST("$(VCLIB)\x86") && EXIST("$(SDKLIB)\ucrt\x86") && EXIST("$(SDKLIB)\um\x86")
+X86_LIBS = 1
+!ENDIF
+
+X64_LIBS =
+!IF EXIST("$(VCLIB)\x64") && EXIST("$(SDKLIB)\ucrt\x64") && EXIST("$(SDKLIB)\um\x64")
+X64_LIBS = 1
+!ENDIF
+
+NO_X64      = 64-bit toolset
+!IF "$(HOST64)"!=""
+NO_X64      = 64-bit libraries
+!ENDIF
+
+ALL_TARGETS = $(EXE32)
+!IF "$(HOST64)"!="" && "$(X64_LIBS)"!=""
+ALL_TARGETS = $(EXE32) $(EXE64)
+NO_X64      =
+!ENDIF
+
+all: $(ALL_TARGETS)
+!IF "$(NO_X64)"!=""
+	@echo   skipped the 64-bit exes - no $(NO_X64)
+!ENDIF
+
+toolchain:
+	@if "$(VCTOOLSINSTALLDIR)"=="" (echo Error: no toolchain environment - run build.bat, or activate one first & exit 1)
+	@if "$(HOST32)"=="" (echo Error: no x86-targeting host toolset under "$(VCTOOLSINSTALLDIR)bin" - expected Hostx64\x86 or Hostx86\x86 & exit 1)
+	@if "$(X86_LIBS)"=="" (echo Error: no 32-bit libraries - the toolset lib\x86 or the SDK ucrt\x86 and um\x86 are missing & exit 1)
+	@if not exist $(RC) (echo Error: no rc.exe under "$(WINDOWSSDKDIR)Bin\$(WINDOWSSDKVERSION)" - run build.bat, or activate one first & exit 1)
 
 obj:
 	@if not exist obj mkdir obj
@@ -67,42 +122,38 @@ release:
 $(LAUNCH_RES): $(LAUNCH_RC) resource\hks-launch.manifest obj
 	$(RC) /nologo /I . /I resource /fo$@ $(LAUNCH_RC)
 
-$(GEN_RC32): $(RC_IN) resource\version.txt
-	@call build.bat --genrc 32
-
-$(GEN_RC64): $(RC_IN) resource\version.txt
-	@call build.bat --genrc 64
+# One generated version resource; rc picks the arch-specific filename via /dBUILD64.
+$(GEN_RC): $(RC_IN) resource\version.txt
+	@call build.bat --genrc
 
 # The installer carries both launchers as resources, so they are built first.
-$(RES32): $(GEN_RC32) $(LAUNCHER32) obj
-	$(RC) /nologo /I . /I resource /dHKS_INSTALLER_32ONLY /fo$@ $(GEN_RC32)
+$(RES32): $(GEN_RC) $(LAUNCHER32) obj
+	$(RC) /nologo /I . /I resource /dHKS_INSTALLER_32ONLY /fo$@ $(GEN_RC)
 
-$(RES64): $(GEN_RC64) $(LAUNCHER64) obj
-	$(RC) /nologo /I . /I resource /fo$@ $(GEN_RC64)
+# The 64-bit installer embeds both launchers, so it needs the 32-bit one built too.
+$(RES64): $(GEN_RC) $(LAUNCHER32) $(LAUNCHER64) obj
+	$(RC) /nologo /I . /I resource /dBUILD64 /fo$@ $(GEN_RC)
 
 $(LAUNCHER32): $(LAUNCH_SRC) $(COMMON_SRC) $(COMMON_HDR) $(LAUNCH_RES) obj\x86
 	$(CL32) $(BASE) /DHKS_LAUNCH_BITS=32 /Foobj\x86\ /Fe$@ $(LAUNCH_SRC) $(COMMON_SRC) $(LAUNCH_RES) /link /SUBSYSTEM:WINDOWS $(LIBS) $(LIBPATH32)
-	@$(DUMPBIN) /headers $@ | findstr /C:"14C machine" >NUL || (echo Error: $@ is not a 32-bit binary & exit 1)
+	@$(LINK32) /dump /headers $@ | findstr /C:"14C machine" >NUL || (echo Error: $@ is not a 32-bit binary & exit 1)
 
 $(LAUNCHER64): $(LAUNCH_SRC) $(COMMON_SRC) $(COMMON_HDR) $(LAUNCH_RES) obj\x64
 	$(CL64) $(BASE) /DHKS_LAUNCH_BITS=64 /Foobj\x64\ /Fe$@ $(LAUNCH_SRC) $(COMMON_SRC) $(LAUNCH_RES) /link /SUBSYSTEM:WINDOWS $(LIBS) $(LIBPATH64)
-	@$(DUMPBIN) /headers $@ | findstr /C:"8664 machine" >NUL || (echo Error: $@ is not a 64-bit binary & exit 1)
+	@$(LINK64) /dump /headers $@ | findstr /C:"8664 machine" >NUL || (echo Error: $@ is not a 64-bit binary & exit 1)
 
-$(EXE32): $(INSTALL_SRC) $(COMMON_SRC) $(COMMON_HDR) $(RES32) obj\x86 release
+$(EXE32): toolchain $(INSTALL_SRC) $(COMMON_SRC) $(COMMON_HDR) $(RES32) obj\x86 release
 	$(CL32) $(BASE) /DHKS_INSTALLER_32ONLY /Foobj\x86\ /Fe$@ $(INSTALL_SRC) $(COMMON_SRC) $(RES32) /link /SUBSYSTEM:CONSOLE $(LIBS) $(LIBPATH32)
-	@$(DUMPBIN) /headers $@ | findstr /C:"14C machine" >NUL || (echo Error: $@ is not a 32-bit binary & exit 1)
+	@$(LINK32) /dump /headers $@ | findstr /C:"14C machine" >NUL || (echo Error: $@ is not a 32-bit binary & exit 1)
 
-$(EXE64): $(INSTALL_SRC) $(COMMON_SRC) $(COMMON_HDR) $(RES64) obj\x64 release
+$(EXE64): toolchain $(INSTALL_SRC) $(COMMON_SRC) $(COMMON_HDR) $(RES64) obj\x64 release
 	$(CL64) $(BASE) /Foobj\x64\ /Fe$@ $(INSTALL_SRC) $(COMMON_SRC) $(RES64) /link /SUBSYSTEM:CONSOLE $(LIBS) $(LIBPATH64)
-	@$(DUMPBIN) /headers $@ | findstr /C:"8664 machine" >NUL || (echo Error: $@ is not a 64-bit binary & exit 1)
-
-rebuild:
-	$(MAKE) /NOLOGO /f build.nmake clean HOSTARCH=$(HOSTARCH)
-	$(MAKE) /NOLOGO /f build.nmake HOSTARCH=$(HOSTARCH)
+	@$(LINK64) /dump /headers $@ | findstr /C:"8664 machine" >NUL || (echo Error: $@ is not a 64-bit binary & exit 1)
 
 clean:
-	@if exist obj rmdir /s /q obj
-	@if exist $(LAUNCHER32) del /q $(LAUNCHER32)
-	@if exist $(LAUNCHER64) del /q $(LAUNCHER64)
-	@if exist $(EXE32) del /q $(EXE32)
-	@if exist $(EXE64) del /q $(EXE64)
+	@if not exist obj if not exist $(LAUNCHER32) if not exist $(LAUNCHER64) if not exist $(EXE32) if not exist $(EXE64) echo   nothing to remove
+	@if exist obj (rmdir /s /q obj & echo   removed obj\)
+	@if exist $(LAUNCHER32) (del /q $(LAUNCHER32) & echo   removed $(LAUNCHER32))
+	@if exist $(LAUNCHER64) (del /q $(LAUNCHER64) & echo   removed $(LAUNCHER64))
+	@if exist $(EXE32) (del /q $(EXE32) & echo   removed $(EXE32))
+	@if exist $(EXE64) (del /q $(EXE64) & echo   removed $(EXE64))

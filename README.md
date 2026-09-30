@@ -39,6 +39,13 @@ I have a few bugbears with the original launcher, mainly that it's quite the dir
 > * The launcher(s) are contained within the above executables as resources extracted on-demand
 > * Needs the VC++ 2022 redist- [x86](https://aka.ms/vc14/vc_redist.x86.exe) for 32-bit systems, plus [x64](https://aka.ms/vc14/vc_redist.x64.exe) for 64-bit ones
 
+**Building from source**
+> * It uses NMAKE for now, my toolchain (being minimal and all) didn't have MSBuild, and I didn't want to work out how to get that going; also didn't feel like getting CMake for unserious projects such as this
+> * The below was only tested against my portablemsvc-installed VC++ 2022 toolchain (system registered) and my girlfriend's honest-to-goodness Visual Studio 2022 install (where the batchfile inherits the Developer Command Prompt environment instead)
+> * In both tests, it was run interactively with a double-click in Explorer
+> * It can also be run non-interactively (`build.bat build` / `build.bat clean`) if that's your kind of thing
+> * If the toolchain variables don't exist on system (normal for an official install) and `build.bat` can't find a Developer Command Prompt with `vswhere`, try running it in the Developer Command Prompt directly- it might just work then!
+
 **Installing with Scoop**
 > * This repo also doubles as a [Scoop](https://scoop.sh) bucket for this project's manifest
 > * You can install the bucket like so: `scoop bucket add hookshot-launchinst https://github.com/aro-1790/hookshot-launchinst`

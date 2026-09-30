@@ -32,7 +32,11 @@ BEGIN
             VALUE "FileVersion", "__REV__"
             VALUE "InternalName", "hookshot-launchinst"
             VALUE "LegalCopyright", "The Langoliers of Code"
-            VALUE "OriginalFilename", "__ORIGINAL_FILENAME__"
+#ifdef BUILD64
+            VALUE "OriginalFilename", "hookshot-launchinst64.exe"
+#else
+            VALUE "OriginalFilename", "hookshot-launchinst32.exe"
+#endif
             VALUE "ProductName", "Hookshot Launcher/Installer"
             VALUE "ProductVersion", "__REV__"
         END
