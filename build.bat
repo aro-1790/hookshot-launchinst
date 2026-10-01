@@ -51,25 +51,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=([IO.File]::ReadAllTe
 exit /b %errorlevel%
 
 :menu
+cls
 echo   1. build
 echo   2. clean
 echo   3. quit
-set "CHOICE="
-set /p "CHOICE=Choice: "
-if "%CHOICE%"=="1" set "VERB=build"
-if "%CHOICE%"=="2" set "VERB=clean"
-if /i "%CHOICE%"=="3" exit /b 0
-if not defined VERB goto menu
-call "%~f0" %VERB%
-set "RC=%errorlevel%"
-if not "%VERB%"=="clean" goto close
-choice /C yn /N /M "Build again? (y/n) "
-if errorlevel 2 exit /b %RC%
-call "%~f0" build
-set "RC=%errorlevel%"
+set "VERB="
+choice /C 123 /N /M "Choice: "
+if errorlevel 255 exit /b 1
+if errorlevel 3 exit /b 0
+if errorlevel 2 (set "VERB=clean" & goto chosen)
+if errorlevel 1 (set "VERB=build" & goto chosen)
+if not defined VERB exit /b 1
 
-:close
+:chosen
+call "%~f0" %VERB%
+if errorlevel 1 goto failed
+goto menu
+
+:failed
 echo.
-echo Press any key to close...
+echo Press any key to continue...
 pause >nul
-exit /b %RC%
+goto menu
